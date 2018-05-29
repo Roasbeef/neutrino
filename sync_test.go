@@ -454,7 +454,6 @@ func TestSetup(t *testing.T) {
 	err = svc.Rescan(
 		neutrino.StartBlock(&startBlock),
 		neutrino.EndBlock(&endBlock),
-		neutrino.WatchTxIDs(tx1.TxHash()),
 		neutrino.NotificationHandlers(rpcclient.NotificationHandlers{
 			OnFilteredBlockConnected: func(height int32,
 				header *wire.BlockHeader,
