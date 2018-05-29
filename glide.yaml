@@ -3,7 +3,9 @@ import:
 - package: github.com/coreos/bbolt
   version: 4f5275f4ebbf6fe7cb772de987fa96ee674460a7
 - package: github.com/btcsuite/btcd
-  version: bc0944904505aab55e089371a892be2f87883161
+  vcs: git
+  version: gcs-modifications
+  repo: git@github.com:Roasbeef/btcd.git
   subpackages:
   - blockchain
   - btcec
@@ -14,7 +16,9 @@ import:
   - wire
 - package: github.com/btcsuite/btclog
 - package: github.com/btcsuite/btcutil
-  version: d4cc87b860166d00d6b5b9e0d3b3d71d6088d4d4
+  vcs: git
+  version: gcs-modifications
+  repo: git@github.com:Roasbeef/btcutil.git
   subpackages:
   - base58
   - gcs
