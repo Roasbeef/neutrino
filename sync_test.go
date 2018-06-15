@@ -951,16 +951,8 @@ func waitForSync(t *testing.T, svc *neutrino.ChainService,
 		return fmt.Errorf("Couldn't get latest basic header from "+
 			"%s: %s", correctSyncNode.P2PAddress(), err)
 	}
-	knownExtHeader, err := correctSyncNode.Node.GetCFilterHeader(
-		knownBestHash, wire.GCSFilterExtended)
-	if err != nil {
-		return fmt.Errorf("Couldn't get latest extended header from "+
-			"%s: %s", correctSyncNode.P2PAddress(), err)
-	}
 	haveBasicHeader := &chainhash.Hash{}
-	haveExtHeader := &chainhash.Hash{}
-	for (knownBasicHeader.PrevFilterHeader != *haveBasicHeader) &&
-		(knownExtHeader.PrevFilterHeader != *haveExtHeader) {
+	for knownBasicHeader.PrevFilterHeader != *haveBasicHeader {
 		if total > syncTimeout {
 			return fmt.Errorf("Timed out after %v waiting for "+
 				"cfheaders synchronization.", syncTimeout)
@@ -974,17 +966,6 @@ func waitForSync(t *testing.T, svc *neutrino.ChainService,
 				continue
 			}
 			return fmt.Errorf("Couldn't get regular filter header"+
-				" for %s: %s", knownBestHash, err)
-		}
-		haveExtHeader, err = svc.ExtFilterHeaders.FetchHeader(knownBestHash)
-		if err != nil {
-			if err == io.EOF {
-				haveExtHeader = &chainhash.Hash{}
-				time.Sleep(syncUpdate)
-				total += syncUpdate
-				continue
-			}
-			return fmt.Errorf("Couldn't get extended filter header"+
 				" for %s: %s", knownBestHash, err)
 		}
 		time.Sleep(syncUpdate)
@@ -1044,11 +1025,6 @@ func waitForSync(t *testing.T, svc *neutrino.ChainService,
 			return fmt.Errorf("Couldn't get basic header "+
 				"for %d (%s) from DB", i, hash)
 		}
-		haveExtHeader, err = svc.ExtFilterHeaders.FetchHeader(&hash)
-		if err != nil {
-			return fmt.Errorf("Couldn't get extended "+
-				"header for %d (%s) from DB", i, hash)
-		}
 		knownBasicHeader, err = correctSyncNode.Node.GetCFilterHeader(
 			&hash, wire.GCSFilterRegular)
 		if err != nil {
@@ -1056,25 +1032,12 @@ func waitForSync(t *testing.T, svc *neutrino.ChainService,
 				"for %d (%s) from node %s", i, hash,
 				correctSyncNode.P2PAddress())
 		}
-		knownExtHeader, err = correctSyncNode.Node.GetCFilterHeader(
-			&hash, wire.GCSFilterExtended)
-		if err != nil {
-			return fmt.Errorf("Couldn't get extended "+
-				"header for %d (%s) from node %s", i,
-				hash, correctSyncNode.P2PAddress())
-		}
 		if *haveBasicHeader != knownBasicHeader.PrevFilterHeader {
 			return fmt.Errorf("Basic header for %d (%s) "+
 				"doesn't match node %s. DB: %s, node: %s", i,
 				hash, correctSyncNode.P2PAddress(),
 				haveBasicHeader,
 				knownBasicHeader.PrevFilterHeader)
-		}
-		if *haveExtHeader != knownExtHeader.PrevFilterHeader {
-			return fmt.Errorf("Extended header for %d (%s)"+
-				" doesn't match node %s. DB: %s, node: %s", i,
-				hash, correctSyncNode.P2PAddress(),
-				haveExtHeader, knownExtHeader.PrevFilterHeader)
 		}
 	}
 	return nil
@@ -1243,104 +1206,6 @@ func testRandomBlocks(t *testing.T, svc *neutrino.ChainService,
 			if err != nil {
 				errChan <- fmt.Errorf("Couldn't calculate "+
 					"header for basic filter for block "+
-					"%d (%s): %s", height, blockHash, err)
-				return
-			}
-			if !bytes.Equal(curHeader[:], calcHeader[:]) {
-				errChan <- fmt.Errorf("Filter header doesn't "+
-					"match. Want: %s, got: %s", curHeader,
-					calcHeader)
-				return
-			}
-			// Get extended cfilter from network
-			haveFilter, err = svc.GetCFilter(blockHash,
-				wire.GCSFilterExtended, queryOptions...)
-			if err != nil {
-				errChan <- err
-				return
-			}
-			// Get extended cfilter from RPC
-			wantFilter, err = correctSyncNode.Node.GetCFilter(
-				&blockHash, wire.GCSFilterExtended)
-			if err != nil {
-				errChan <- fmt.Errorf("Couldn't get extended "+
-					"filter for block %d (%s) via RPC: %s",
-					height, blockHash, err)
-				return
-			}
-			// Check that network and RPC cfilters match
-			if haveFilter != nil {
-				haveBytes, err = haveFilter.NBytes()
-				if err != nil {
-					errChan <- fmt.Errorf("Couldn't get "+
-						"extended filter for block %d "+
-						"(%s) via P2P: %s", height,
-						blockHash, err)
-					return
-				}
-			} else {
-				haveBytes = nil
-			}
-			if !bytes.Equal(haveBytes, wantFilter.Data) {
-				errChan <- fmt.Errorf("Extended filter from "+
-					"P2P network/DB doesn't match RPC "+
-					"for block %d (%s):\nRPC: %s\nNet: %s",
-					height, blockHash,
-					hex.EncodeToString(wantFilter.Data),
-					hex.EncodeToString(haveBytes))
-				return
-			}
-			// Calculate extended filter from block
-			calcFilter, err = builder.BuildExtFilter(
-				haveBlock.MsgBlock())
-			if err != nil {
-				errChan <- fmt.Errorf("Couldn't build extended"+
-					" filter for block %d (%s): %s", height,
-					blockHash, err)
-				return
-			}
-			calcBytes, err = calcFilter.NBytes()
-			if err != nil {
-				errChan <- fmt.Errorf("Couldn't get bytes from"+
-					" calculated extended filter for block"+
-					" %d (%s): %s", height, blockHash, err)
-			}
-			// Check that the network value matches the calculated
-			// value from the block.
-			if !bytes.Equal(haveBytes, calcBytes) {
-				errChan <- fmt.Errorf("Extended filter from "+
-					"P2P network/DB doesn't match "+
-					"calculated value for block %d (%s): "+
-					"got\n%+v\nwant\n%+v\n", height,
-					blockHash, haveFilter, calcFilter)
-				return
-			}
-			// Get previous extended filter header from the
-			// database.
-			prevHeader, err = svc.ExtFilterHeaders.FetchHeader(
-				&blockHeader.PrevBlock)
-			if err != nil {
-				errChan <- fmt.Errorf("Couldn't get extended "+
-					"filter header for block %d (%s) from "+
-					"DB: %s", height-1,
-					blockHeader.PrevBlock, err)
-				return
-			}
-			// Get current basic filter header from the database.
-			curHeader, err = svc.ExtFilterHeaders.FetchHeader(
-				&blockHash)
-			if err != nil {
-				errChan <- fmt.Errorf("Couldn't get extended "+
-					"filter header for block %d (%s) from "+
-					"DB: %s", height, blockHash, err)
-				return
-			}
-			// Check that the filter and header line up.
-			calcHeader, err = builder.MakeHeaderForFilter(
-				calcFilter, *prevHeader)
-			if err != nil {
-				errChan <- fmt.Errorf("Couldn't calculate "+
-					"header for extended filter for block "+
 					"%d (%s): %s", height, blockHash, err)
 				return
 			}
