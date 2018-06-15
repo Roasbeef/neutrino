@@ -993,6 +993,31 @@ func waitForSync(t *testing.T, svc *neutrino.ChainService,
 	return nil
 }
 
+func fetchPrevInputScripts(block *wire.MsgBlock, client *rpctest.Harness) ([][]byte, error) {
+	var inputScripts [][]byte
+	for i, tx := range block.Transactions {
+		if i == 0 {
+			continue
+		}
+
+		for _, txIn := range tx.TxIn {
+			prevTxHash := txIn.PreviousOutPoint.Hash
+
+			prevTx, err := client.Node.GetRawTransaction(&prevTxHash)
+			if err != nil {
+				return nil, err
+			}
+
+			prevIndex := txIn.PreviousOutPoint.Index
+			prevOutput := prevTx.MsgTx().TxOut[prevIndex]
+
+			inputScripts = append(inputScripts, prevOutput.PkScript)
+		}
+	}
+
+	return inputScripts, nil
+}
+
 // testRandomBlocks goes through all blocks in random order and ensures we can
 // correctly get cfilters from them. It uses numQueryThreads goroutines running
 // at the same time to go through this. 50 is comfortable on my somewhat dated
@@ -1107,9 +1132,21 @@ func testRandomBlocks(t *testing.T, svc *neutrino.ChainService,
 					hex.EncodeToString(haveBytes))
 				return
 			}
+
+			inputScripts, err := fetchPrevInputScripts(
+				haveBlock.MsgBlock(),
+				correctSyncNode,
+			)
+			if err != nil {
+				errChan <- fmt.Errorf("unable to create prev "+
+					"input scripts: %v", err)
+				return
+			}
+
 			// Calculate basic filter from block.
 			calcFilter, err := builder.BuildBasicFilter(
-				haveBlock.MsgBlock())
+				haveBlock.MsgBlock(), inputScripts,
+			)
 			if err != nil {
 				errChan <- fmt.Errorf("Couldn't build basic "+
 					"filter for block %d (%s): %s", height,
