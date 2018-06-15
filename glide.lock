@@ -1,10 +1,10 @@
 hash: d0c473d026f542ed6880b52edeebd0ae776e2a4cad1e7317f10643a3227ac8fe
-updated: 2018-05-28T22:10:32.066984672-07:00
+updated: 2018-06-14T20:58:07.926531008-07:00
 imports:
 - name: github.com/aead/siphash
   version: e404fcfc888570cadd1610538e2dbc89f66af814
 - name: github.com/btcsuite/btcd
-  version: 5244fcdadab093fa7a0f4779cc23e94b17a29797
+  version: f51d299c6dfee9552c8ddba75c1342109658a4d8
   repo: git@github.com:Roasbeef/btcd.git
   vcs: git
   subpackages:
@@ -24,7 +24,7 @@ imports:
 - name: github.com/btcsuite/btclog
   version: 84c8d2346e9fc8c7b947e243b9c24e6df9fd206a
 - name: github.com/btcsuite/btcutil
-  version: add20a5348a5dbab84c21737c252ee95c71104b2
+  version: 9ee0930d6f74737b0ddf558d6fc852565ec9b7c7
   repo: git@github.com:Roasbeef/btcutil.git
   vcs: git
   subpackages:
@@ -66,27 +66,27 @@ imports:
 - name: github.com/coreos/bbolt
   version: 4f5275f4ebbf6fe7cb772de987fa96ee674460a7
 - name: github.com/davecgh/go-spew
-  version: ecdeabc65495df2dec95d7c4a4c3e021903035e5
+  version: 8991bc29aa16c548c550c7ff78260e27b9ab7c73
   subpackages:
   - spew
 - name: github.com/golang/protobuf
-  version: 3a3da3a4e26776cc22a79ef46d5d58477532dede
+  version: 5831880292e721c76b58a16ecc60adc27d8e6355
   subpackages:
   - proto
 - name: github.com/jessevdk/go-flags
   version: 1679536dcc895411a9f5848d9a0250be7856448c
 - name: github.com/kkdai/bstream
-  version: f391b8402d23024e7c0f624b31267a89998fca95
+  version: f71540b9dfdcfe64dbf2818e9b66423c6aafcacd
 - name: golang.org/x/crypto
-  version: 9419663f5a44be8b34ca85f08abc5fe1be11f8a3
+  version: a8fb68e7206f8c78be19b432c58eb52a6aa34462
   subpackages:
   - ripemd160
 - name: golang.org/x/net
-  version: dfa909b99c79129e1100513e5cd36307665e5723
+  version: db08ff08e8622530d9ed3a0e8ac279f6d4c02196
   subpackages:
   - context
 - name: golang.org/x/sys
-  version: c11f84a56e43e20a78cee75a7c034031ecf57d1f
+  version: 8883426083c04a2627e6e59d84d5f6fb63d16c91
   subpackages:
   - unix
 - name: google.golang.org/grpc
