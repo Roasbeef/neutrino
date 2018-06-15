@@ -220,8 +220,14 @@ checkResponses:
 // an extended filter will be queried for. Otherwise, we'll fetch the regular
 // filter.
 func (s *ChainService) GetCFilter(blockHash chainhash.Hash,
-	filterType wire.FilterType, options ...QueryOption) (*gcs.Filter,
-	error) {
+	filterType wire.FilterType, options ...QueryOption) (*gcs.Filter, error) {
+
+	// The only supported filter atm is the regular filter, so we'll reject
+	// all other filters.
+	if filterType != wire.GCSFilterRegular {
+		return nil, fmt.Errorf("unknown filter type: %v", filterType)
+	}
+
 	// Only get one CFilter at a time to avoid redundancy from mutliple
 	// rescans running at once.
 	s.mtxCFilter.Lock()
@@ -231,10 +237,6 @@ func (s *ChainService) GetCFilter(blockHash chainhash.Hash,
 	// querying, and db-write functions.
 	getHeader := s.RegFilterHeaders.FetchHeader
 	dbFilterType := filterdb.RegularFilter
-	if filterType == wire.GCSFilterExtended {
-		getHeader = s.ExtFilterHeaders.FetchHeader
-		dbFilterType = filterdb.ExtendedFilter
-	}
 
 	// First check the database to see if we already have this filter. If
 	// so, then we can return it an exit early.
@@ -300,7 +302,9 @@ func (s *ChainService) GetCFilter(blockHash chainhash.Hash,
 				}
 
 				gotFilter, err := gcs.FromNBytes(
-					builder.DefaultP, response.Data)
+					builder.DefaultP, builder.DefaultM,
+					response.Data,
+				)
 				if err != nil {
 					// Malformed filter data. We can ignore
 					// this message.
