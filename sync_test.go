@@ -448,7 +448,7 @@ func TestSetup(t *testing.T) {
 	}
 
 	// Call GetUtxo for our output in tx1 to see if it's spent.
-	ourIndex = 1 << 30 // Should work on 32-bit systems
+	ourIndex := 1 << 30 // Should work on 32-bit systems
 	for i, txo := range tx1.TxOut {
 		if bytes.Equal(txo.PkScript, script1) {
 			ourIndex = i
@@ -465,7 +465,10 @@ func TestSetup(t *testing.T) {
 			" %s", tx1.TxHash())
 	}
 	spendReport, err := svc.GetUtxo(
-		neutrino.WatchOutPoints(ourOutPoint),
+		neutrino.WatchInputs(neutrino.InputWithScript{
+			PkScript: script1,
+			OutPoint: ourOutPoint,
+		}),
 		neutrino.StartBlock(&waddrmgr.BlockStamp{Height: 801}),
 	)
 	if err != nil {
@@ -485,7 +488,7 @@ func TestSetup(t *testing.T) {
 			close(quitRescan)
 		}
 	}()
-	startBlock = waddrmgr.BlockStamp{Height: 795}
+	startBlock := waddrmgr.BlockStamp{Height: 795}
 	rescan, errChan := startRescan(t, svc, addr1, &startBlock, quitRescan)
 	if err != nil {
 		t.Fatalf("Couldn't start a rescan for %s: %s", addr1, err)
@@ -556,6 +559,7 @@ func TestSetup(t *testing.T) {
 			return
 		}
 	}
+
 	// Create another address to send to so we don't trip the rescan with
 	// the old address and we can test monitoring both OutPoint usage and
 	// receipt by addresses.
@@ -692,7 +696,10 @@ func TestSetup(t *testing.T) {
 
 	// Check and make sure the previous UTXO is now spent.
 	spendReport, err = svc.GetUtxo(
-		neutrino.WatchOutPoints(ourOutPoint),
+		neutrino.WatchInputs(neutrino.InputWithScript{
+			PkScript: script1,
+			OutPoint: ourOutPoint,
+		}),
 		neutrino.StartBlock(&waddrmgr.BlockStamp{Height: 801}),
 	)
 	if err != nil {
