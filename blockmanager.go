@@ -151,10 +151,8 @@ type blockManager struct {
 	basicHeaders            map[chainhash.Hash]map[chainhash.Hash][]*ServerPeer
 	lastBasicCFHeaderHeight int32
 	numBasicCFHeadersMsgs   int32
-	extendedHeaders         map[chainhash.Hash]map[chainhash.Hash][]*ServerPeer
-	lastExtCFHeaderHeight   int32
-	numExtCFHeadersMsgs     int32
-	mapMutex                sync.Mutex
+
+	mapMutex sync.Mutex
 
 	minRetargetTimespan int64 // target timespan / adjustment factor
 	maxRetargetTimespan int64 // target timespan * adjustment factor
@@ -181,9 +179,6 @@ func newBlockManager(s *ChainService) (*blockManager, error) {
 		minRetargetTimespan: targetTimespan / adjustmentFactor,
 		maxRetargetTimespan: targetTimespan * adjustmentFactor,
 		basicHeaders: make(
-			map[chainhash.Hash]map[chainhash.Hash][]*ServerPeer,
-		),
-		extendedHeaders: make(
 			map[chainhash.Hash]map[chainhash.Hash][]*ServerPeer,
 		),
 	}
@@ -426,11 +421,11 @@ func (b *blockManager) findNextHeaderCheckpoint(height int32) *chaincfg.Checkpoi
 // findPreviousHeaderCheckpoint returns the last checkpoint before the passed
 // height. It returns a checkpoint matching the genesis block when the height
 // is earlier than the first checkpoint or there are no checkpoints for the
-// current network. This is used for resetting state when a malicious peer sends
-// us headers that don't lead up to a known checkpoint.
+// current network. This is used for resetting state when a malicious peer
+// sends us headers that don't lead up to a known checkpoint.
 func (b *blockManager) findPreviousHeaderCheckpoint(height int32) *chaincfg.Checkpoint {
-	// Start with the genesis block - earliest checkpoint to which our
-	// code will want to reset
+	// Start with the genesis block - earliest checkpoint to which our code
+	// will want to reset
 	prevCheckpoint := &chaincfg.Checkpoint{
 		Height: 0,
 		Hash:   b.server.chainParams.GenesisHash,
@@ -452,27 +447,24 @@ func (b *blockManager) findPreviousHeaderCheckpoint(height int32) *chaincfg.Chec
 // syncing from a new peer.
 func (b *blockManager) resetHeaderState(newestHeader *wire.BlockHeader,
 	newestHeight int32) {
+
 	b.headerList.Init()
 	b.startHeader = nil
+
 	b.mapMutex.Lock()
 	b.basicHeaders = make(
 		map[chainhash.Hash]map[chainhash.Hash][]*ServerPeer,
 	)
-	b.extendedHeaders = make(
-		map[chainhash.Hash]map[chainhash.Hash][]*ServerPeer,
-	)
 	b.mapMutex.Unlock()
 
-	// Add an entry for the latest known block into the header pool.
-	// This allows the next downloaded header to prove it links to the chain
+	// Add an entry for the latest known block into the header pool.  This
+	// allows the next downloaded header to prove it links to the chain
 	// properly.
 	node := headerNode{header: newestHeader, height: newestHeight}
 	b.headerList.PushBack(&node)
+
 	b.mapMutex.Lock()
 	b.basicHeaders[newestHeader.BlockHash()] = make(
-		map[chainhash.Hash][]*ServerPeer,
-	)
-	b.extendedHeaders[newestHeader.BlockHash()] = make(
 		map[chainhash.Hash][]*ServerPeer,
 	)
 	b.mapMutex.Unlock()
@@ -512,102 +504,71 @@ func (b *blockManager) startSync(peers *list.List) {
 			"filter header: %s", err)
 		return
 	}
-	_, bestExtHeight, err := b.server.ExtFilterHeaders.ChainTip()
-	if err != nil {
-		log.Errorf("Failed to get height for the latest extended "+
-			"filter header: %s", err)
-		return
-	}
+
 	// We fill the header list all the way back to the first header with
 	// unknown cfheaders.
-	minHeight := bestRegHeight
-	if bestExtHeight < minHeight {
-		minHeight = bestExtHeight
-	}
-	maxminHeight := bestRegHeight
-	if bestExtHeight > maxminHeight {
-		maxminHeight = bestExtHeight
-	}
 	maxHeight := b.headerList.Front().Value.(*headerNode).height
-	for height := maxHeight - 1; height >= int32(minHeight); height-- {
-		header, err := b.server.BlockHeaders.FetchHeaderByHeight(uint32(height))
+	for height := maxHeight - 1; height >= int32(bestRegHeight); height-- {
+		header, err := b.server.BlockHeaders.FetchHeaderByHeight(
+			uint32(height),
+		)
 		if err != nil {
 			log.Errorf("Failed to get block header for height %d: "+
 				"%s", height, err)
 		}
+
 		b.mapMutex.Lock()
 		b.basicHeaders[header.BlockHash()] = make(
 			map[chainhash.Hash][]*ServerPeer,
 		)
-		b.extendedHeaders[header.BlockHash()] = make(
-			map[chainhash.Hash][]*ServerPeer,
-		)
 		b.mapMutex.Unlock()
+
 		node := headerNode{header: header, height: height}
 		b.headerList.PushFront(&node)
 	}
+
 	if bestRegHeight < uint32(best.Height) {
 		log.Infof("Catching up regular filter headers from %d to %d",
 			bestRegHeight, best.Height)
 	}
-	if bestExtHeight < uint32(best.Height) {
-		log.Infof("Catching up extended filter headers from %d to %d",
-			bestExtHeight, best.Height)
-	}
-	for i := minHeight; i < maxminHeight; {
-		endHeight := i
-		fType := wire.GCSFilterRegular
-		if endHeight < bestRegHeight {
-			// We're catching extended headers up to regular headers
-			// so we set the header type to extended.
-			fType = wire.GCSFilterExtended
-			if endHeight+wire.MaxCFHeadersPerMsg > bestRegHeight {
-				endHeight = bestRegHeight
-			} else {
-				endHeight += wire.MaxCFHeadersPerMsg
-			}
-		}
-		if endHeight < bestExtHeight {
-			// We're catching regular headers up to extended headers
-			// so we set the header type to regular.
-			fType = wire.GCSFilterRegular
-			if endHeight+wire.MaxCFHeadersPerMsg > bestRegHeight {
-				endHeight = bestExtHeight
-			} else {
-				endHeight += wire.MaxCFHeadersPerMsg
-			}
-		}
-		if endHeight > uint32(best.Height) {
-			endHeight = uint32(best.Height)
-		}
-		endHeader, err := b.server.BlockHeaders.
-			FetchHeaderByHeight(endHeight)
-		if err != nil {
-			log.Errorf("Failed to get block header for height %d: "+
-				"%s", endHeight, err)
-			break
-		}
-		endHash := endHeader.BlockHash()
-		b.sendGetcfheaders(i+1, &endHash, int(endHeight-i), fType)
-		i = endHeight
-	}
-	for i := maxminHeight; i < uint32(best.Height); {
+
+	// Now that the header list has been filled in, we can request the
+	// missing set of filter header hashes for the current set of fitlers.
+	for i := bestRegHeight; i < uint32(best.Height); {
+		// The height we'll have fetched after this iteration is the
+		// current end of the horizon, factoring in the max number of
+		// headers we can fetch in an instance.
 		endHeight := i + wire.MaxCFHeadersPerMsg
+
+		// If we were about to over shoot, then we'll clamp down to the
+		// best known height.
 		if endHeight > uint32(best.Height) {
 			endHeight = uint32(best.Height)
 		}
-		endHeader, err := b.server.BlockHeaders.
-			FetchHeaderByHeight(endHeight)
+
+		// With the end height known, we'll grab the last block header
+		// in this range in order to fetch its hash as we query
+		// according to a staring height, terminating once it finds the
+		// stop hash.
+		endHeader, err := b.server.BlockHeaders.FetchHeaderByHeight(
+			endHeight,
+		)
 		if err != nil {
 			log.Errorf("Failed to get block header for height %d: "+
 				"%s", endHeight, err)
 			break
 		}
 		endHash := endHeader.BlockHash()
-		b.sendGetcfheaders(i+1, &endHash, int(endHeight-i),
-			wire.GCSFilterRegular)
-		b.sendGetcfheaders(i+1, &endHash, int(endHeight-i),
-			wire.GCSFilterExtended)
+
+		// Now that we have the ending hash, we can construct our
+		// filter header message query.
+		startHeight := i + 1
+		numExpectedFilters := int(endHeight - i)
+		b.sendGetcfheaders(
+			startHeight, &endHash, numExpectedFilters,
+			wire.GCSFilterRegular,
+		)
+
 		i = endHeight
 	}
 
@@ -929,9 +890,6 @@ func (b *blockManager) handleHeadersMsg(hmsg *headersMsg) {
 			b.basicHeaders[node.header.BlockHash()] = make(
 				map[chainhash.Hash][]*ServerPeer,
 			)
-			b.extendedHeaders[node.header.BlockHash()] = make(
-				map[chainhash.Hash][]*ServerPeer,
-			)
 			b.mapMutex.Unlock()
 			if b.startHeader == nil {
 				b.startHeader = e
@@ -1112,20 +1070,15 @@ func (b *blockManager) handleHeadersMsg(hmsg *headersMsg) {
 			b.basicHeaders[blockHeader.BlockHash()] = make(
 				map[chainhash.Hash][]*ServerPeer,
 			)
-			b.extendedHeaders[blockHeader.BlockHash()] = make(
-				map[chainhash.Hash][]*ServerPeer,
-			)
 			b.mapMutex.Unlock()
+
 			if b.lastBasicCFHeaderHeight > int32(backHeight) {
 				b.lastBasicCFHeaderHeight = int32(backHeight)
 			}
-			if b.lastExtCFHeaderHeight > int32(backHeight) {
-				b.lastExtCFHeaderHeight = int32(backHeight)
-			}
-			b.sendGetcfheaders(backHeight+1, finalHash, 1,
-				wire.GCSFilterRegular)
-			b.sendGetcfheaders(backHeight+1, finalHash, 1,
-				wire.GCSFilterExtended)
+
+			b.sendGetcfheaders(
+				backHeight+1, finalHash, 1, wire.GCSFilterRegular,
+			)
 		}
 
 		// Verify the header at the next checkpoint height matches.
@@ -1143,19 +1096,25 @@ func (b *blockManager) handleHeadersMsg(hmsg *headersMsg) {
 					"disconnecting", node.height,
 					nodeHash, hmsg.peer.Addr(),
 					b.nextCheckpoint.Hash)
+
 				prevCheckpoint := b.findPreviousHeaderCheckpoint(
-					node.height)
+					node.height,
+				)
+
 				log.Infof("Rolling back to previous validated "+
 					"checkpoint at height %d/hash %s",
 					prevCheckpoint.Height,
 					prevCheckpoint.Hash)
+
 				_, err := b.server.rollBackToHeight(uint32(
-					prevCheckpoint.Height))
+					prevCheckpoint.Height),
+				)
 				if err != nil {
 					log.Criticalf("Rollback failed: %s",
 						err)
 					// Should we panic here?
 				}
+
 				hmsg.peer.Disconnect()
 				return
 			}
@@ -1177,10 +1136,11 @@ func (b *blockManager) handleHeadersMsg(hmsg *headersMsg) {
 
 		// Send getcfheaders to each peer based on these headers.
 		cfhStopHash := msg.Headers[len(msg.Headers)-1].BlockHash()
-		b.sendGetcfheaders(uint32(int(finalHeight)-len(headerWriteBatch)+1),
-			&cfhStopHash, len(headerWriteBatch), wire.GCSFilterRegular)
-		b.sendGetcfheaders(uint32(int(finalHeight)-len(headerWriteBatch)+1),
-			&cfhStopHash, len(headerWriteBatch), wire.GCSFilterExtended)
+		startHeight := uint32(int(finalHeight) - len(headerWriteBatch) + 1)
+		b.sendGetcfheaders(
+			startHeight, &cfhStopHash, len(headerWriteBatch),
+			wire.GCSFilterRegular,
+		)
 	}
 
 	// When this header is a checkpoint, find the next checkpoint.
@@ -1209,8 +1169,9 @@ func (b *blockManager) handleHeadersMsg(hmsg *headersMsg) {
 
 // sendGetcfheaders sends a getcfheaders message to all peers with the
 // specified start block and hash block and for the specified type of header.
-func (b *blockManager) sendGetcfheaders(startHeight uint32, endBlock *chainhash.Hash,
-	count int, filterType wire.FilterType) {
+func (b *blockManager) sendGetcfheaders(startHeight uint32,
+	endBlock *chainhash.Hash, count int, filterType wire.FilterType) {
+
 	// Send getcfheaders to each peer based on these headers.
 	cfhReq := cfhRequest{
 		filterType: filterType,
@@ -1284,11 +1245,11 @@ func (b *blockManager) QueueCFHeaders(cfheaders *wire.MsgCFHeaders,
 	// Track number of pending cfheaders messsages for both basic and
 	// extended filters.
 	pendingMsgs := &b.numBasicCFHeadersMsgs
-	if cfheaders.FilterType == wire.GCSFilterExtended {
-		pendingMsgs = &b.numExtCFHeadersMsgs
-	}
 	atomic.AddInt32(pendingMsgs, 1)
-	b.peerChan <- &cfheadersMsg{cfheaders: cfheaders, peer: sp}
+
+	b.peerChan <- &cfheadersMsg{
+		cfheaders: cfheaders, peer: sp,
+	}
 }
 
 // handleCFHeadersMsg handles cfheaders messages from all peers.
@@ -1299,10 +1260,6 @@ func (b *blockManager) handleCFHeadersMsg(cfhmsg *cfheadersMsg) {
 	// it.
 	headerMap := b.basicHeaders
 	pendingMsgs := &b.numBasicCFHeadersMsgs
-	if cfhmsg.cfheaders.FilterType == wire.GCSFilterExtended {
-		headerMap = b.extendedHeaders
-		pendingMsgs = &b.numExtCFHeadersMsgs
-	}
 	atomic.AddInt32(pendingMsgs, -1)
 
 	// Go through each filter hash and calculate the header hash from it.
@@ -1380,12 +1337,6 @@ func (b *blockManager) handleProcessCFHeadersMsg(msg *processCFHeadersMsg) {
 	lastCFHeaderHeight := &b.lastBasicCFHeaderHeight
 	pendingMsgs := &b.numBasicCFHeadersMsgs
 	headerStore := b.server.RegFilterHeaders
-	if msg.filterType == wire.GCSFilterExtended {
-		headerMap = b.extendedHeaders
-		lastCFHeaderHeight = &b.lastExtCFHeaderHeight
-		pendingMsgs = &b.numExtCFHeadersMsgs
-		headerStore = b.server.ExtFilterHeaders
-	}
 
 	stopHash := msg.earliestNode.header.PrevBlock
 
@@ -1523,9 +1474,6 @@ func (b *blockManager) handleProcessCFHeadersMsg(msg *processCFHeadersMsg) {
 
 	// Notify subscribers of a connected block.
 	msgType := connectBasic
-	if msg.filterType == wire.GCSFilterExtended {
-		msgType = connectExt
-	}
 	for _, header := range processedHeaders {
 		b.server.sendSubscribedMsg(&blockMessage{
 			msgType: msgType,
@@ -1537,9 +1485,6 @@ func (b *blockManager) handleProcessCFHeadersMsg(msg *processCFHeadersMsg) {
 	// downloaded all of the filter headers, both basic and extended. Leave
 	// at least one as an anchor.
 	minHeight := b.lastBasicCFHeaderHeight
-	if b.lastExtCFHeaderHeight < minHeight {
-		minHeight = b.lastExtCFHeaderHeight
-	}
 	el = b.headerList.Front()
 	for el.Value.(*headerNode).height < minHeight {
 		elToRemove := el
