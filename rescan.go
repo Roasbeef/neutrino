@@ -315,7 +315,13 @@ func (c *rescanChain) GetBlock(ctx context.Context,
 func basicMatcher(getFilter func(chainhash.Hash, wire.FilterType,
 	...QueryOption) (*gcs.Filter, error)) filtermatch.BlockMatcher {
 
-	fetch := func(ctx context.Context, hash chainhash.Hash, batch bool) (
+	return filtermatch.NewBlockMatcher(basicFilterSource(getFilter))
+}
+
+func basicFilterSource(getFilter func(chainhash.Hash, wire.FilterType,
+	...QueryOption) (*gcs.Filter, error)) filtermatch.BasicFilterSource {
+
+	return func(ctx context.Context, hash chainhash.Hash, batch bool) (
 		*gcs.Filter, error) {
 
 		option := NumRetries(2)
@@ -326,7 +332,6 @@ func basicMatcher(getFilter func(chainhash.Hash, wire.FilterType,
 			hash, wire.GCSFilterRegular, option, CancelQuery(ctx.Done()),
 		)
 	}
-	return filtermatch.NewBlockMatcher(filtermatch.BasicFilterSource(fetch))
 }
 
 // Subscribe is part of the rescan.ScanChain interface.

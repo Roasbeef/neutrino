@@ -602,21 +602,9 @@ func (s *ChainService) prepareCFiltersQuery(blockHash chainhash.Hash,
 	}, nil
 }
 
-// GetCFilter gets a cfilter from the database. Failing that, it requests the
-// cfilter from the network and writes it to the database.
-func (s *ChainService) GetCFilter(blockHash chainhash.Hash,
-	filterType wire.FilterType, options ...QueryOption) (*gcs.Filter,
-	error) {
-
-	// The only supported filter atm is the regular filter, so we'll reject
-	// all other filters.
-	if filterType != wire.GCSFilterRegular {
-		return nil, fmt.Errorf("unknown filter type: %v", filterType)
-	}
-
-	// Based on if extended is true or not, we'll set up our set of
-	// querying, and db-write functions.
-	dbFilterType := filterdb.RegularFilter
+// fetchStoredFilter returns a locally available filter, or nil on a miss.
+func (s *ChainService) fetchStoredFilter(blockHash chainhash.Hash,
+	dbFilterType filterdb.FilterType) (*gcs.Filter, error) {
 
 	// First check the cache to see if we already have this filter. If
 	// so, then we can return it an exit early.
@@ -635,6 +623,26 @@ func (s *ChainService) GetCFilter(blockHash chainhash.Hash,
 	}
 	if err != nil && err != filterdb.ErrFilterNotFound {
 		return nil, err
+	}
+	return nil, nil
+}
+
+// GetCFilter gets a cfilter from the database. Failing that, it requests the
+// cfilter from the network and writes it to the database.
+func (s *ChainService) GetCFilter(blockHash chainhash.Hash,
+	filterType wire.FilterType, options ...QueryOption) (*gcs.Filter,
+	error) {
+
+	// The only supported filter atm is the regular filter, so we'll reject
+	// all other filters.
+	if filterType != wire.GCSFilterRegular {
+		return nil, fmt.Errorf("unknown filter type: %v", filterType)
+	}
+
+	dbFilterType := filterdb.RegularFilter
+	filter, err := s.fetchStoredFilter(blockHash, dbFilterType)
+	if filter != nil || err != nil {
+		return filter, err
 	}
 
 	qo := defaultQueryOptions()

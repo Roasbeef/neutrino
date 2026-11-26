@@ -1,6 +1,7 @@
 module github.com/lightninglabs/neutrino
 
 require (
+	github.com/aead/siphash v1.0.1
 	github.com/btcsuite/btcd v0.26.0
 	github.com/btcsuite/btcd/address/v2 v2.0.0
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0
@@ -16,10 +17,10 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/lightninglabs/neutrino/cache v1.1.4
 	github.com/lightningnetwork/lnd/queue v1.2.1
-	github.com/stretchr/testify v1.11.1
-	golang.org/x/crypto v0.41.0
+	github.com/stretchr/testify v1.12.1
+	golang.org/x/crypto v0.57.0
 	golang.org/x/exp v0.0.0-20250811191247-51f88131bc50
-	pgregory.net/rapid v1.2.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (
@@ -66,6 +67,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 	modernc.org/libc v1.66.3 // indirect
@@ -75,7 +77,6 @@ require (
 )
 
 require (
-	github.com/aead/siphash v1.0.1 // indirect
 	github.com/btcsuite/btcd/v2transport v1.0.1 // indirect
 	github.com/btcsuite/btclog/v2 v2.0.1-0.20250728225537-6090e87c6c5b // indirect
 	github.com/btcsuite/btcwallet v0.16.18 // indirect
@@ -98,10 +99,12 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	go.etcd.io/bbolt v1.3.11 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 go 1.26.10
 
 replace github.com/golang-migrate/migrate/v4 => github.com/lightninglabs/migrate/v4 v4.18.2-9023d66a-fork-pr-2.0.20251211093704-71c1eef09789
+
+replace github.com/btcsuite/btcd/wire/v2 => github.com/roasbeef/btcd/wire/v2 v2.0.0-20261126011537-c4dcd26cb80c
