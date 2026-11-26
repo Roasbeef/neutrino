@@ -13,6 +13,11 @@ config.StagedFilters = &neutrino.StagedFilterConfig{
 }
 ```
 
+An application that imports this experimental branch needs the wire module
+replacement from Neutrino's `go.mod` in the application's own `go.mod`.
+Copy the `replace github.com/btcsuite/btcd/wire/v2` directive, then run
+`go mod tidy` in the application module.
+
 A historical scan can request the same stage for up to 16 consecutive blocks
 with synced filter headers. A single block uses `getcfstage`. Both request
 forms receive individual `cfstage` replies over the existing peer connection.
