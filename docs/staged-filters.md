@@ -39,3 +39,17 @@ candidate block verification.
 The matcher uses portable SipHash-to-range mapping by default. An amd64 build
 with `GOEXPERIMENT=simd` can use the vector implementation when the CPU has the
 required AVX-512 features and the watch list has enough supported scripts.
+
+## Measuring the matcher
+
+```sh
+GOEXPERIMENT=simd go test ./internal/filterhash -run '^$' -bench BenchmarkMapToRange -benchmem -count 5
+```
+
+On an Intel Xeon Platinum 8573C with Go 1.26.10, mapping 128 homogeneous
+22-byte scripts took 3.179 µs on the scalar path and 1.479 µs on the selected
+vector path. At 512 scripts the corresponding times were 12.618 and 5.477 µs.
+The mapping reused its output buffer. This microbenchmark covers SipHash-2-4
+and range reduction. A rescan also decodes filters, reads headers, exchanges
+messages and retrieves candidate blocks. The scalar path handles short
+batches, interleaved script lengths and machines without the vector build.

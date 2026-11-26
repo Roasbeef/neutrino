@@ -357,6 +357,6 @@ func (s *ChainService) stagedFilterOnChain(e *stagedFilterEntry) bool {
 	if err != nil || *blockHash != e.hash {
 		return false
 	}
-	filterHeader, err := s.RegFilterHeaders.FetchHeaderByHeight(e.height)
+	filterHeader, err := s.RegFilterHeaders.FetchHeader(&e.hash)
 	return err == nil && *filterHeader == e.header
 }
