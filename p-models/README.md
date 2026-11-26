@@ -20,3 +20,18 @@ then let the implementation follow that contract.
   suite remains green.
 - As the Go packages land in later PRs, add bridge or trace replay tests that
   exercise the real implementation against the same model stories.
+
+## Rescan bridge
+
+The P subscription-closure recovery case models caller supervision. Its wrapper
+keeps the scanned cursor and requests another subscription after closure. In Go,
+a closed subscription reports chain shutdown and ends the actor. The caller
+starts a new actor at its saved cursor when chain access returns. The bridge
+test exercises both Go actor lifetimes and checks that the replacement catches
+up from stored headers while preserving callback order and subscription
+lifecycle.
+
+```sh
+cd p-models/bridge
+go test ./...
+```

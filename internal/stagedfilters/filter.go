@@ -238,7 +238,7 @@ func writeBits(data []byte, cursor *int, value uint64, width int) {
 		space := 8 - *cursor%8
 		step := min(width, space)
 		mask := uint64((1 << step) - 1)
-		chunk := byte((value>>(width-step))&mask)
+		chunk := byte((value >> (width - step)) & mask)
 		data[*cursor/8] |= chunk << (space - step)
 		*cursor += step
 		width -= step

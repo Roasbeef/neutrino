@@ -103,7 +103,8 @@ func FetchMatchingBlock(ctx context.Context, matcher BlockMatcher,
 		return nil, err
 	}
 	if block == nil || *block.Hash() != hash {
-		return nil, fmt.Errorf("did not receive requested block %v", hash)
+		return nil, fmt.Errorf("did not receive requested block %v",
+			hash)
 	}
 	if err := verify(block); err != nil {
 		return nil, fmt.Errorf("verifying filter against block %v: %w",
