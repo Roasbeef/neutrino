@@ -42,7 +42,9 @@ func (fetch BasicFilterSource) Match(ctx context.Context, hash chainhash.Hash,
 }
 
 // Verify implements Backend for basic filters.
-func (BasicFilterSource) Verify(filter *gcs.Filter, block *btcutil.Block) error {
+func (BasicFilterSource) Verify(filter *gcs.Filter,
+	block *btcutil.Block) error {
+
 	_, err := VerifyBasicBlockFilter(filter, block)
 	return err
 }

@@ -37,7 +37,8 @@ func (e *Environment) matcher() (filtermatch.BlockMatcher, error) {
 	}
 	chain, ok := e.Chain.(BasicChainSource)
 	if !ok {
-		return nil, errors.New("rescan requires a block matcher or a basic filter source")
+		return nil, errors.New("rescan requires a block matcher or " +
+			"a basic filter source")
 	}
 	basic := filtermatch.BasicFilterSource(chain.GetCFilter)
 	return filtermatch.NewBlockMatcher(basic), nil

@@ -481,7 +481,8 @@ func (s *UtxoScanner) fetchActiveBlock(reporter *batchSpendReporter,
 
 		var block *btcutil.Block
 		if len(newReqs) > 0 {
-			// A birth block is required even for an empty watch list.
+			// A birth block is required even for an empty watch
+			// list.
 			block, err = s.getBlock(s.ctx, *hash)
 		} else {
 			block, err = s.matchBlock(*hash, reporter.filterEntries)

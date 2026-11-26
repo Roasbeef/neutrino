@@ -1,0 +1,132 @@
+name: Staged compact filters
+
+on:
+  push:
+    branches:
+      - roasbeef/staged-compact-filters
+  pull_request:
+    branches:
+      - roasbeef/block-matcher
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staged-compact-filters-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GO_VERSION: "1.26.10"
+
+jobs:
+  dependency-metadata:
+    if: github.repository == 'Roasbeef/neutrino'
+    name: Resolve and record Go module checksums
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Verify module files
+        run: |
+          go mod tidy
+          go -C p-models/bridge mod tidy
+          git diff --exit-code -- go.mod go.sum p-models/bridge/go.mod p-models/bridge/go.sum
+
+  staged-filters:
+    if: github.repository == 'Roasbeef/neutrino'
+    name: Staged filters (${{ matrix.mode }})
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: default
+            experiment: ""
+            tags: ""
+          - mode: simd
+            experiment: simd
+            tags: ""
+          - mode: purego
+            experiment: simd
+            tags: purego
+          - mode: go127-amd64
+            experiment: simd
+            tags: ""
+            go: "1.27.4"
+          - mode: go127-arm64
+            experiment: simd
+            tags: ""
+            go: "1.27.4"
+            runner: ubuntu-24.04-arm
+    env:
+      GOEXPERIMENT: ${{ matrix.experiment }}
+      TEST_TAGS: ${{ matrix.tags }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go || env.GO_VERSION }}
+      - name: Test filter decoding and script mapping
+        run: go test -mod=readonly -tags="$TEST_TAGS" -count=1 ./internal/stagedfilters ./internal/filterhash
+      - name: Test the peer and wallet matcher
+        if: matrix.mode == 'default'
+        run: go test -mod=readonly -count=1 -run '^(TestStagedFiltersOnBitcoinPeer|TestRescanWithMatcher|TestUtxoMatcherRejectsCandidate)$' .
+      - name: Report formatting differences
+        if: matrix.mode == 'default'
+        run: |
+          gofmt -w neutrino.go query.go rescan.go staged_filters.go staged_filters_test.go internal/stagedfilters/*.go internal/filterhash/*.go
+          git diff --exit-code -- '*.go'
+      - name: Vet the staged packages
+        if: matrix.mode == 'default'
+        run: go vet -mod=readonly ./internal/stagedfilters ./internal/filterhash
+
+  full-suite:
+    if: github.repository == 'Roasbeef/neutrino'
+    name: Full Go suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+      - name: Install btcd for RPC integration tests
+        run: |
+          make btcd
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run the suite
+        run: go test -mod=readonly -p 2 -timeout=25m ./...
+
+  model-bridge:
+    if: github.repository == 'Roasbeef/neutrino'
+    name: Rescan model bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: p-models/bridge/go.sum
+      - run: go -C p-models/bridge test -mod=readonly ./...

@@ -1,13 +1,13 @@
 package bridge
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/address/v2"
-
 	"github.com/btcsuite/btcd/btcutil/v2"
 	"github.com/btcsuite/btcd/btcutil/v2/gcs"
 	"github.com/btcsuite/btcd/btcutil/v2/gcs/builder"
@@ -15,9 +15,9 @@ import (
 	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/btcsuite/btcd/wire/v2"
-	neutrino "github.com/lightninglabs/neutrino"
 	"github.com/lightninglabs/neutrino/blockntfns"
 	"github.com/lightninglabs/neutrino/headerfs"
+	"github.com/lightninglabs/neutrino/rescan"
 )
 
 // MockChain is a small test chain that lets the bridge run the actual Go
@@ -77,7 +77,7 @@ type SubscriptionEvent struct {
 	Height uint32
 }
 
-var _ neutrino.BasicChainSource = (*MockChain)(nil)
+var _ rescan.BasicChainSource = (*MockChain)(nil)
 
 // NewMockChain creates a linear chain with the requested number of blocks.
 func NewMockChain(numBlocks int) *MockChain {
@@ -269,8 +269,8 @@ func (c *MockChain) CloseActiveSubscription() {
 	}
 }
 
-// CloseActiveSubscriptionAndAddBlock simulates a subscription dying while the
-// chain advances before the actor can resubscribe.
+// CloseActiveSubscriptionAndAddBlock advances the stored chain as the
+// active subscription closes.
 func (c *MockChain) CloseActiveSubscriptionAndAddBlock() headerfs.BlockStamp {
 	c.mu.Lock()
 	sub := c.activeSub
@@ -285,34 +285,38 @@ func (c *MockChain) CloseActiveSubscriptionAndAddBlock() headerfs.BlockStamp {
 	return stamp
 }
 
-// RewriteHeaderAtHeight swaps the height index to point to a new synthetic
-// header. This is used by bridge tests to model a chain view change between
-// two callback dispatches.
-func (c *MockChain) RewriteHeaderAtHeight(height uint32) error {
+// RewriteHeaderAtHeight temporarily replaces an active height lookup.
+// The returned function restores the original header after both callbacks.
+func (c *MockChain) RewriteHeaderAtHeight(height uint32) (func(), error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	hash, ok := c.blockHashesByHeight[height]
 	if !ok {
-		return errors.New("block height not found")
+		return nil, errors.New("block height not found")
 	}
 
 	header, ok := c.blockHeaders[*hash]
 	if !ok {
-		return errors.New("block header not found")
+		return nil, errors.New("block header not found")
 	}
 
 	altHeader := *header
-	altHeader.Timestamp = altHeader.Timestamp.Add(
-		time.Second,
-	)
+	altHeader.Timestamp = altHeader.Timestamp.Add(time.Second)
 	altHash := altHeader.BlockHash()
 
 	c.blockHashesByHeight[height] = &altHash
 	c.blockHeaders[altHash] = &altHeader
 	c.blockHeightIndex[altHash] = height
 
-	return nil
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		c.blockHashesByHeight[height] = hash
+		delete(c.blockHeaders, altHash)
+		delete(c.blockHeightIndex, altHash)
+	}, nil
 }
 
 // FailFilterFetches arranges for GetCFilter to fail the next count times for
@@ -470,11 +474,15 @@ func (c *MockChain) GetBlockHeader(
 	return header, height, nil
 }
 
-func (c *MockChain) GetBlock(hash chainhash.Hash,
-	_ ...neutrino.QueryOption) (*btcutil.Block, error) {
+func (c *MockChain) GetBlock(ctx context.Context,
+	hash chainhash.Hash) (*btcutil.Block, error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	block, ok := c.blocks[hash]
 	if !ok {
@@ -498,12 +506,15 @@ func (c *MockChain) GetFilterHeaderByHeight(
 	return filterHeader, nil
 }
 
-func (c *MockChain) GetCFilter(hash chainhash.Hash,
-	_ wire.FilterType,
-	_ ...neutrino.QueryOption) (*gcs.Filter, error) {
+func (c *MockChain) GetCFilter(ctx context.Context, hash chainhash.Hash,
+	_ bool) (*gcs.Filter, error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if remaining := c.filterFailures[hash]; remaining > 0 {
 		c.filterFailures[hash] = remaining - 1
@@ -588,3 +599,6 @@ func (c *MockChain) Subscribe(
 func (c *MockChain) IsCurrent() bool {
 	return true
 }
+
+// MarkAsConfirmed is a no-op because the mock does not broadcast transactions.
+func (c *MockChain) MarkAsConfirmed(chainhash.Hash) {}

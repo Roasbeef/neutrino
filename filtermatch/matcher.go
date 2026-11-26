@@ -87,8 +87,8 @@ func (m matcher[F]) match(ctx context.Context, hash chainhash.Hash,
 // or verification failure never produces a block for the wallet to process.
 func FetchMatchingBlock(ctx context.Context, matcher BlockMatcher,
 	hash chainhash.Hash, scripts [][]byte, batch bool,
-	getBlock func(context.Context, chainhash.Hash) (*btcutil.Block, error)) (
-	*btcutil.Block, error) {
+	getBlock func(context.Context, chainhash.Hash) (
+		*btcutil.Block, error)) (*btcutil.Block, error) {
 
 	if matcher == nil {
 		return nil, fmt.Errorf("missing block matcher")
@@ -103,7 +103,8 @@ func FetchMatchingBlock(ctx context.Context, matcher BlockMatcher,
 		return nil, err
 	}
 	if block == nil || *block.Hash() != hash {
-		return nil, fmt.Errorf("did not receive requested block %v", hash)
+		return nil, fmt.Errorf("did not receive requested block %v",
+			hash)
 	}
 	if err := verify(block); err != nil {
 		return nil, fmt.Errorf("verifying filter against block %v: %w",

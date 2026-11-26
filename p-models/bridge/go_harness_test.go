@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/address/v2"
-
 	"github.com/btcsuite/btcd/chaincfg/v2"
 	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/lightninglabs/neutrino/rescan"
@@ -25,6 +24,7 @@ func TestRealActorLifecycleConformsToModelInvariants(
 	})
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
@@ -98,13 +98,15 @@ func TestRealActorRewindFindsHistoricalTx(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
 	rewindTo := uint32(txStamp.Height - 1)
-	err = harness.Actor.AddWatchAddrs(
-		[]address.Address{addr}, nil, &rewindTo,
-	)
+	err = harness.Actor.AddWatchAddrs(t.Context(), rescan.WatchUpdate{
+		Addrs:    []address.Address{addr},
+		RewindTo: &rewindTo,
+	})
 	require.NoError(t, err)
 
 	require.Eventually(
@@ -163,6 +165,7 @@ func TestCurrentAddWatchNoOpRewindDoesNotRestartSubscription(
 	})
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
@@ -171,7 +174,7 @@ func TestCurrentAddWatchNoOpRewindDoesNotRestartSubscription(
 	initialFinishedCount := harness.Recorder.FinishedCount()
 
 	// Use a no-op rewind target equal to the current tip.
-	state, err := harness.Actor.CurrentState()
+	state, err := harness.Actor.CurrentState(t.Context())
 	require.NoError(t, err)
 
 	cur, ok := state.(*rescan.StateCurrent)
@@ -184,9 +187,10 @@ func TestCurrentAddWatchNoOpRewindDoesNotRestartSubscription(
 	require.NoError(t, err)
 
 	rewindTo := uint32(cur.CurStamp.Height)
-	err = harness.Actor.AddWatchAddrs(
-		[]address.Address{addr}, nil, &rewindTo,
-	)
+	err = harness.Actor.AddWatchAddrs(t.Context(), rescan.WatchUpdate{
+		Addrs:    []address.Address{addr},
+		RewindTo: &rewindTo,
+	})
 	require.NoError(t, err)
 
 	time.Sleep(200 * time.Millisecond)
@@ -224,25 +228,45 @@ func TestBlockCallbacksPreserveHeaderIdentity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var rewrote atomic.Bool
-	harness.Recorder.SetOnObserved(
-		func(event ObservedEvent) {
-			if event.Kind != ObservedFilteredBlockConnected ||
-				event.Height != 1 ||
-				rewrote.Swap(true) {
+	// Change the active lookup only during dispatch. The next scan step
+	// checks ancestry, so restore the height before the turn completes.
+	rewrote := make(chan error, 1)
+	var (
+		rewriteAttempted bool
+		restore          func()
+	)
+	harness.Recorder.SetOnObserved(func(event ObservedEvent) {
+		if event.Height != 1 {
+			return
+		}
 
+		switch event.Kind {
+		case ObservedFilteredBlockConnected:
+			if rewriteAttempted {
 				return
 			}
+			rewriteAttempted = true
+			var err error
+			restore, err = harness.Chain.RewriteHeaderAtHeight(1)
+			rewrote <- err
 
-			err := harness.Chain.RewriteHeaderAtHeight(
-				uint32(event.Height),
-			)
-			require.NoError(t, err)
-		},
-	)
+		case ObservedBlockConnected:
+			if restore != nil {
+				restore()
+				restore = nil
+			}
+		}
+	})
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
+	select {
+	case err := <-rewrote:
+		require.NoError(t, err)
+	default:
+		t.Fatal("height lookup was never rewritten")
+	}
 
 	errs := CheckBlockCallbackConsistency(
 		harness.Recorder.Events(),
@@ -281,16 +305,16 @@ func TestRecoveredBlockRetryDoesNotReError(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
 	newTip := chain.AddBlock()
 	require.NoError(
 		t,
-		chain.FailFilterFetches(
-			uint32(newTip.Height),
-			1,
-		),
+		// Fail the live fetch and the first fetch after falling back to
+		// historical sync. The latter is reported and arms the retry.
+		chain.FailFilterFetches(uint32(newTip.Height), 2),
 	)
 	require.NoError(
 		t,
@@ -312,13 +336,15 @@ func TestRecoveredBlockRetryDoesNotReError(t *testing.T) {
 	)
 
 	rewindTo := uint32(newTip.Height - 2)
-	err = harness.Actor.AddWatchAddrs(nil, nil, &rewindTo)
+	err = harness.Actor.AddWatchAddrs(t.Context(), rescan.WatchUpdate{
+		RewindTo: &rewindTo,
+	})
 	require.NoError(t, err)
 
 	require.Eventually(
 		t,
 		func() bool {
-			state, err := harness.Actor.CurrentState()
+			state, err := harness.Actor.CurrentState(t.Context())
 			if err != nil {
 				return false
 			}
@@ -369,10 +395,11 @@ func TestDuplicateCurrentTipNotificationIsIgnored(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
-	state, err := harness.Actor.CurrentState()
+	state, err := harness.Actor.CurrentState(t.Context())
 	require.NoError(t, err)
 
 	cur, ok := state.(*rescan.StateCurrent)
@@ -473,10 +500,11 @@ func TestSubscriptionLifecycleRetainedAcrossRewind(
 	})
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
-	state, err := harness.Actor.CurrentState()
+	state, err := harness.Actor.CurrentState(t.Context())
 	require.NoError(t, err)
 
 	cur, ok := state.(*rescan.StateCurrent)
@@ -485,7 +513,9 @@ func TestSubscriptionLifecycleRetainedAcrossRewind(
 	initialFinished := harness.Recorder.FinishedCount()
 	rewindTo := uint32(2)
 
-	err = harness.Actor.AddWatchAddrs(nil, nil, &rewindTo)
+	err = harness.Actor.AddWatchAddrs(t.Context(), rescan.WatchUpdate{
+		RewindTo: &rewindTo,
+	})
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
@@ -528,10 +558,11 @@ func TestDisconnectCallbacksStayPairedAcrossReattach(
 	})
 	require.NoError(t, err)
 
+	t.Cleanup(harness.StopAndWait)
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
-	state, err := harness.Actor.CurrentState()
+	state, err := harness.Actor.CurrentState(t.Context())
 	require.NoError(t, err)
 
 	cur, ok := state.(*rescan.StateCurrent)
@@ -547,7 +578,7 @@ func TestDisconnectCallbacksStayPairedAcrossReattach(
 	require.Eventually(
 		t,
 		func() bool {
-			state, err := harness.Actor.CurrentState()
+			state, err := harness.Actor.CurrentState(t.Context())
 			if err != nil {
 				return false
 			}
@@ -571,7 +602,7 @@ func TestDisconnectCallbacksStayPairedAcrossReattach(
 	require.Eventually(
 		t,
 		func() bool {
-			state, err := harness.Actor.CurrentState()
+			state, err := harness.Actor.CurrentState(t.Context())
 			if err != nil {
 				return false
 			}
@@ -630,120 +661,102 @@ func TestDisconnectCallbacksStayPairedAcrossReattach(
 	harness.StopAndWait()
 }
 
-// TestSubscriptionClosureResubscribesAndRecoversBacklog proves the real actor
-// can recover when the subscription channel dies unexpectedly while Current.
-// The chain advances while the actor is blind, so successful recovery requires
-// a fresh subscription plus backlog delivery from the current height.
-func TestSubscriptionClosureResubscribesAndRecoversBacklog(
-	t *testing.T,
-) {
-
-	var errorCount atomic.Int32
-
+// TestSubscriptionClosureAndCallerRestart exercises the supervisor boundary
+// modeled by the P closure recovery case. The actor reports chain shutdown;
+// the caller resumes from the scanned cursor when a chain is available again.
+func TestSubscriptionClosureAndCallerRestart(t *testing.T) {
+	errs := make(chan error, 1)
+	var reported atomic.Int32
 	harness, err := NewActorHarness(6, ActorHarnessConfig{
 		BatchSize: 100,
 		OnError: func(err error) {
-			errorCount.Add(1)
+			if reported.Add(1) == 1 {
+				errs <- err
+			}
 		},
 	})
 	require.NoError(t, err)
+	t.Cleanup(harness.StopAndWait)
 
 	harness.Start()
 	require.NoError(t, harness.WaitForCurrent(5*time.Second))
 
-	initialSubscribeCount := harness.Chain.SubscribeCount()
+	state, err := harness.Actor.CurrentState(t.Context())
+	require.NoError(t, err)
+	current, ok := state.(*rescan.StateCurrent)
+	require.True(t, ok)
+	saved := current.CurStamp
+	priorEvents := harness.Recorder.Events()
 	newTip := harness.Chain.CloseActiveSubscriptionAndAddBlock()
 
-	require.Eventually(
-		t,
-		func() bool {
-			count := harness.Chain.SubscribeCount()
-			return count == initialSubscribeCount+1
-		},
-		5*time.Second,
-		10*time.Millisecond,
-		"expected actor to "+
-			"restart the "+
-			"subscription after "+
-			"unexpected closure",
-	)
-
-	require.Eventually(
-		t,
-		func() bool {
-			return errorCount.Load() >= 1
-		},
-		5*time.Second,
-		10*time.Millisecond,
-		"expected unexpected "+
-			"subscription closure to "+
-			"surface as an actor "+
-			"error",
-	)
-
-	require.Eventually(
-		t,
-		func() bool {
-			state, err := harness.Actor.CurrentState()
-			if err != nil {
-				return false
-			}
-
-			cur, ok := state.(*rescan.StateCurrent)
-			if !ok ||
-				cur.CurStamp.Height != newTip.Height {
-
-				return false
-			}
-
-			events := harness.Recorder.Events()
-			if len(events) == 0 {
-				return false
-			}
-
-			last := events[len(events)-1]
-			return last.Kind == ObservedBlockConnected &&
-				last.Height == newTip.Height
-		},
-		5*time.Second,
-		10*time.Millisecond,
-		"expected actor to "+
-			"recover backlog from "+
-			"the restarted "+
-			"subscription",
-	)
-
-	errs := CheckFilteredBlockForEveryBlock(
-		harness.Recorder.Events(),
-	)
-	require.Empty(
-		t,
-		errs,
-		"bridge invariant errors: %v",
-		errs,
-	)
-
-	errs = CheckBlockCallbackConsistency(
-		harness.Recorder.Events(),
-	)
-	require.Empty(
-		t,
-		errs,
-		"bridge invariant errors: %v",
-		errs,
-	)
-
-	errs = CheckMonotonicFilteredProgress(
-		harness.Recorder.Events(),
-	)
-	require.Empty(
-		t,
-		errs,
-		"bridge invariant errors: %v",
-		errs,
-	)
+	select {
+	case <-harness.Actor.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected subscription closure to end the actor")
+	}
 
 	harness.StopAndWait()
+	require.ErrorIs(t, harness.Actor.Err(), rescan.ErrSubscriptionClosed)
+	require.EqualValues(t, 1, harness.Chain.SubscribeCount())
+	require.EqualValues(t, 1, harness.Chain.CancelCount())
+	require.Equal(t, priorEvents, harness.Recorder.Events())
+	select {
+	case err := <-errs:
+		require.ErrorIs(t, err, rescan.ErrSubscriptionClosed)
+	default:
+		t.Fatal("expected the actor to report the subscription closure")
+	}
+	require.EqualValues(t, 1, reported.Load())
+
+	// Start a new rescan from the caller's saved height. The replacement
+	// subscribes without backlog and catches up via the stored headers.
+	restarted, err := NewActorHarnessWithChain(harness.Chain,
+		ActorHarnessConfig{
+			StartHeight: uint32(saved.Height),
+			BatchSize:   100,
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(restarted.StopAndWait)
+	restarted.Start()
+	require.NoError(t, restarted.WaitForCurrent(5*time.Second))
+
+	state, err = restarted.Actor.CurrentState(t.Context())
+	require.NoError(t, err)
+	current, ok = state.(*rescan.StateCurrent)
+	require.True(t, ok)
+	require.Equal(t, newTip.Height, current.CurStamp.Height)
+	require.Equal(t, newTip.Hash, current.CurStamp.Hash)
+
+	recoveredEvents := restarted.Recorder.Events()
+	require.Equal(t, []ObservedEvent{
+		{
+			Kind:   ObservedFilteredBlockConnected,
+			Height: newTip.Height,
+			Hash:   newTip.Hash,
+		},
+		{
+			Kind:   ObservedBlockConnected,
+			Height: newTip.Height,
+			Hash:   newTip.Hash,
+		},
+		{
+			Kind:   ObservedRescanFinished,
+			Height: newTip.Height,
+		},
+	}, recoveredEvents)
+
+	events := append(priorEvents, recoveredEvents...)
+	require.Empty(t, CheckFilteredBlockForEveryBlock(events))
+	require.Empty(t, CheckBlockCallbackConsistency(events))
+	require.Empty(t, CheckMonotonicFilteredProgress(events))
+
+	restarted.StopAndWait()
+	require.Empty(t, CheckSubscriptionAlternation(
+		harness.Chain.SubscriptionEvents(),
+	))
+	require.EqualValues(t, 2, harness.Chain.SubscribeCount())
+	require.EqualValues(t, 2, harness.Chain.CancelCount())
 }
 
 // TestMockSubscriptionZeroHeightMatchesProduction checks the production

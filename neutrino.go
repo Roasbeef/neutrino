@@ -672,6 +672,11 @@ type Config struct {
 	// A nil matcher uses BIP158 basic filters.
 	BlockMatcher filtermatch.BlockMatcher
 
+	// StagedFilters opts into experimental staged compact filters for the
+	// default matcher. It requires regtest or simnet and cannot be combined
+	// with a custom BlockMatcher.
+	StagedFilters *StagedFilterConfig
+
 	// FilterCacheSize indicates the size (in bytes) of filters the cache will
 	// hold in memory at most.
 	FilterCacheSize uint64
@@ -909,6 +914,23 @@ func NewChainService(cfg Config) (*ChainService, error) {
 		persistToDisk:     cfg.PersistToDisk,
 		broadcastTimeout:  cfg.BroadcastTimeout,
 		headersImport:     cfg.HeadersImport,
+	}
+	s.blockMatcher = cfg.BlockMatcher
+	if cfg.StagedFilters != nil {
+		if s.blockMatcher != nil {
+			return nil, errors.New(
+				"staged compact filters cannot be " +
+					"combined with a custom block matcher",
+			)
+		}
+		staged, err := newStagedFilterSource(&s, *cfg.StagedFilters)
+		if err != nil {
+			return nil, err
+		}
+		s.blockMatcher = filtermatch.NewBlockMatcher(staged)
+	}
+	if s.blockMatcher == nil {
+		s.blockMatcher = basicMatcher(s.GetCFilter)
 	}
 	s.workManager = querysyncwm.NewWorkManager(&querysyncwm.Config{
 		ConnectedPeers:     s.ConnectedPeers,
@@ -1162,10 +1184,6 @@ func NewChainService(cfg Config) (*ChainService, error) {
 	}
 	s.connManager = cmgr
 
-	s.blockMatcher = cfg.BlockMatcher
-	if s.blockMatcher == nil {
-		s.blockMatcher = basicMatcher(s.GetCFilter)
-	}
 	s.utxoScanner = NewUtxoScanner(&UtxoScannerConfig{
 		BestSnapshot: s.BestBlock,
 		GetBlockHash: s.GetBlockHash,

@@ -37,7 +37,7 @@ type ScanSource interface {
 	ChainParams() chaincfg.Params
 
 	// BestBlock retrieves the most recent block's height and hash where we
-	// can scan. A basic-filter source has both headers ready at this height.
+	// can scan. The basic filter source needs both headers at that height.
 	BestBlock() (*headerfs.BlockStamp, error)
 
 	// GetBlockHeaderByHeight returns the header of the block with the given
@@ -315,7 +315,13 @@ func (c *rescanChain) GetBlock(ctx context.Context,
 func basicMatcher(getFilter func(chainhash.Hash, wire.FilterType,
 	...QueryOption) (*gcs.Filter, error)) filtermatch.BlockMatcher {
 
-	fetch := func(ctx context.Context, hash chainhash.Hash, batch bool) (
+	return filtermatch.NewBlockMatcher(basicFilterSource(getFilter))
+}
+
+func basicFilterSource(getFilter func(chainhash.Hash, wire.FilterType,
+	...QueryOption) (*gcs.Filter, error)) filtermatch.BasicFilterSource {
+
+	return func(ctx context.Context, hash chainhash.Hash, batch bool) (
 		*gcs.Filter, error) {
 
 		option := NumRetries(2)
@@ -323,10 +329,10 @@ func basicMatcher(getFilter func(chainhash.Hash, wire.FilterType,
 			option = OptimisticBatch()
 		}
 		return getFilter(
-			hash, wire.GCSFilterRegular, option, CancelQuery(ctx.Done()),
+			hash, wire.GCSFilterRegular, option,
+			CancelQuery(ctx.Done()),
 		)
 	}
-	return filtermatch.NewBlockMatcher(filtermatch.BasicFilterSource(fetch))
 }
 
 // Subscribe is part of the rescan.ScanChain interface.
@@ -549,10 +555,12 @@ func NewRescan(chain BasicChainSource, options ...RescanOption) *Rescan {
 
 // NewRescanWithMatcher scans chain with the supplied backend. F ties the
 // backend's candidates to their verifier. Chain access does not depend on F.
-func NewRescanWithMatcher[F any](chain ScanSource, backend filtermatch.Backend[F],
-	options ...RescanOption) *Rescan {
+func NewRescanWithMatcher[F any](chain ScanSource,
+	backend filtermatch.Backend[F], options ...RescanOption) *Rescan {
 
-	return newRescan(chain, filtermatch.NewBlockMatcher(backend), options...)
+	return newRescan(
+		chain, filtermatch.NewBlockMatcher(backend), options...,
+	)
 }
 
 func newRescan(chain ScanSource, matcher filtermatch.BlockMatcher,

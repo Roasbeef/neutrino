@@ -1,17 +1,17 @@
 package bridge
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/address/v2"
-
 	"github.com/btcsuite/btcd/btcutil/v2"
 	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/wire/v2"
-	neutrino "github.com/lightninglabs/neutrino"
+	"github.com/lightninglabs/neutrino/filtermatch"
 	"github.com/lightninglabs/neutrino/headerfs"
 	"github.com/lightninglabs/neutrino/rescan"
 )
@@ -67,13 +67,13 @@ func (r *EventRecorder) Callbacks() rescan.Callbacks {
 				),
 			})
 		},
-		OnBlockConnected: func(height int32,
-			header *wire.BlockHeader, _ time.Time) {
+		OnBlockConnected: func(hash *chainhash.Hash,
+			height int32, _ time.Time) {
 
 			r.record(ObservedEvent{
 				Kind:   ObservedBlockConnected,
 				Height: height,
-				Hash:   header.BlockHash(),
+				Hash:   *hash,
 			})
 		},
 		OnFilteredBlockDisconnected: func(height int32,
@@ -85,13 +85,13 @@ func (r *EventRecorder) Callbacks() rescan.Callbacks {
 				Hash:   header.BlockHash(),
 			})
 		},
-		OnBlockDisconnected: func(height int32,
-			header *wire.BlockHeader) {
+		OnBlockDisconnected: func(hash *chainhash.Hash,
+			height int32, _ time.Time) {
 
 			r.record(ObservedEvent{
 				Kind:   ObservedBlockDisconnected,
 				Height: height,
-				Hash:   header.BlockHash(),
+				Hash:   *hash,
 			})
 		},
 		OnRescanFinished: func(height int32) {
@@ -363,10 +363,12 @@ type ActorHarness struct {
 
 // ActorHarnessConfig configures a real Go actor scenario.
 type ActorHarnessConfig struct {
+	// StartHeight is the last block already scanned by the caller.
+	StartHeight uint32
 	StartTime   time.Time
 	BatchSize   int
 	WatchAddrs  []address.Address
-	WatchInputs []neutrino.InputWithScript
+	WatchInputs []filtermatch.InputWithScript
 	OnError     func(error)
 }
 
@@ -386,26 +388,22 @@ func NewActorHarness(
 func NewActorHarnessWithChain(chain *MockChain,
 	cfg ActorHarnessConfig) (*ActorHarness, error) {
 
-	bestBlock, err := chain.BestBlock()
+	header, err := chain.GetBlockHeaderByHeight(cfg.StartHeight)
 	if err != nil {
 		return nil, err
 	}
 
-	genesisHash := chain.ChainParams().GenesisHash
-	genesisHeader := &chain.ChainParams().GenesisBlock.Header
 	startStamp := headerfs.BlockStamp{
-		Hash:   *genesisHash,
-		Height: 0,
-	}
-	if bestBlock.Height == 0 {
-		startStamp.Timestamp = genesisHeader.Timestamp
+		Hash:      header.BlockHash(),
+		Height:    int32(cfg.StartHeight),
+		Timestamp: header.Timestamp,
 	}
 
 	recorder := &EventRecorder{}
-	actor := rescan.NewRescanActor(rescan.ActorConfig{
+	actor, err := rescan.NewRescanActor(rescan.ActorConfig{
 		Chain:       chain,
 		StartStamp:  startStamp,
-		StartHeader: *genesisHeader,
+		StartHeader: *header,
 		StartTime:   cfg.StartTime,
 		WatchAddrs:  cfg.WatchAddrs,
 		WatchInputs: cfg.WatchInputs,
@@ -413,6 +411,9 @@ func NewActorHarnessWithChain(chain *MockChain,
 		BatchSize:   cfg.BatchSize,
 		OnError:     cfg.OnError,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &ActorHarness{
 		Chain:    chain,
@@ -437,20 +438,27 @@ func (h *ActorHarness) WaitForCurrent(
 	timeout time.Duration,
 ) error {
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		state, err := h.Actor.CurrentState()
-		if err == nil {
-			if _, ok := state.(*rescan.StateCurrent); ok {
-				return nil
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		state, err := h.Actor.CurrentState(ctx)
+		if err != nil {
+			return fmt.Errorf("wait for actor to reach current state: %w",
+				err)
+		}
+		if _, ok := state.(*rescan.StateCurrent); ok {
+			return nil
 		}
 
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("actor did not reach current state: %w",
+				ctx.Err())
+		case <-ticker.C:
+		}
 	}
-
-	return fmt.Errorf(
-		"actor did not reach current state within %v",
-		timeout,
-	)
 }

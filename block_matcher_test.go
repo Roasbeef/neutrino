@@ -25,7 +25,9 @@ func (hashFilterChain) GetCFilter(hash chainhash.Hash, typ wire.FilterType,
 	_ ...QueryOption) (chainhash.Hash, error) {
 
 	if typ != testHashFilter {
-		return chainhash.Hash{}, errors.New("unsupported test filter type")
+		return chainhash.Hash{}, errors.New(
+			"unsupported test filter type",
+		)
 	}
 	return hash, nil
 }
@@ -34,12 +36,15 @@ var _ ChainSource[chainhash.Hash] = hashFilterChain{}
 
 // hashBackend uses a block hash as its match evidence.
 type hashBackend struct {
-	match  func(chainhash.Hash, [][]byte, bool) (filtermatch.Decision[chainhash.Hash], error)
+	match func(chainhash.Hash, [][]byte, bool) (
+		filtermatch.Decision[chainhash.Hash], error)
+
 	verify func(chainhash.Hash, *btcutil.Block) error
 }
 
 func (b hashBackend) Match(_ context.Context, hash chainhash.Hash,
-	scripts [][]byte, batch bool) (filtermatch.Decision[chainhash.Hash], error) {
+	scripts [][]byte, batch bool) (
+	filtermatch.Decision[chainhash.Hash], error) {
 
 	return b.match(hash, scripts, batch)
 }
