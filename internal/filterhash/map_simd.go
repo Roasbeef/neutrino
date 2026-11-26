@@ -21,9 +21,9 @@ func mapToRange(dst []uint64, key *[16]byte, modulus uint64, scripts [][]byte) {
 		return
 	}
 
-	// Group contiguous runs so all lanes perform the same number of rounds
-	// with the same tail size. Hash smaller runs and leftover scripts together
-	// with the scalar implementation, outside the vector loop.
+	// Group contiguous runs so all lanes use the same number of rounds
+	// and the same tail size. Hash shorter runs and leftovers with the
+	// scalar implementation outside the vector loop.
 	scalarStart := 0
 	for start := 0; start <= len(scripts)-minRun; {
 		length := len(scripts[start])
@@ -31,7 +31,9 @@ func mapToRange(dst []uint64, key *[16]byte, modulus uint64, scripts [][]byte) {
 		for end < len(scripts) && len(scripts[end]) == length {
 			end++
 		}
-		if end-start >= minRun && length >= minLength && length <= maxLength {
+		if end-start >= minRun && length >= minLength &&
+			length <= maxLength {
+
 			batchEnd := start + ((end - start) &^ (lanes - 1))
 			mapScalar(dst[scalarStart:start], key, modulus,
 				scripts[scalarStart:start])
@@ -64,7 +66,9 @@ func mapSIMDBatches(dst []uint64, key *[16]byte, modulus uint64,
 		v0, v1, v2, v3 := s0, s1, s2, s3
 		for offset := 0; offset < full; offset += 8 {
 			for lane, script := range batch {
-				words[lane] = binary.LittleEndian.Uint64(script[offset:])
+				words[lane] = binary.LittleEndian.Uint64(
+					script[offset:],
+				)
 			}
 			m := loadVector(&words)
 			v0, v1, v2, v3 = sipCompress(v0, v1, v2, v3, m)
@@ -93,7 +97,8 @@ func mapSIMDBatches(dst []uint64, key *[16]byte, modulus uint64,
 }
 
 func sipCompress(v0, v1, v2, v3, message archsimd.Uint64x8) (
-	archsimd.Uint64x8, archsimd.Uint64x8, archsimd.Uint64x8, archsimd.Uint64x8) {
+	archsimd.Uint64x8, archsimd.Uint64x8,
+	archsimd.Uint64x8, archsimd.Uint64x8) {
 
 	v0, v1, v2, v3 = sipRound(v0, v1, v2, v3.Xor(message))
 	v0, v1, v2, v3 = sipRound(v0, v1, v2, v3)
@@ -101,7 +106,8 @@ func sipCompress(v0, v1, v2, v3, message archsimd.Uint64x8) (
 }
 
 func sipRound(v0, v1, v2, v3 archsimd.Uint64x8) (
-	archsimd.Uint64x8, archsimd.Uint64x8, archsimd.Uint64x8, archsimd.Uint64x8) {
+	archsimd.Uint64x8, archsimd.Uint64x8,
+	archsimd.Uint64x8, archsimd.Uint64x8) {
 
 	v0 = v0.Add(v1)
 	v1 = v1.RotateAllLeft(13).Xor(v0)

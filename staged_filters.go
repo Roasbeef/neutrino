@@ -23,7 +23,7 @@ const stagedFilterTimeout = 2 * time.Second
 // rescans and GetUtxo on regtest or simnet.
 type StagedFilterConfig struct {
 	// Peer is the address of a normal connected peer explicitly configured
-	// to serve stages. Set ConnectPeers or AddPeers to connect to this node.
+	// to serve stages. Set ConnectPeers or AddPeers to connect to it.
 	Peer string
 
 	// Timeout covers all the stage requests for one lookup. A zero timeout
@@ -38,8 +38,8 @@ type StagedFilterConfig struct {
 	// The client checks the basic hash against its regular filter headers.
 	// Without this callback or a matching commitment, a negative requires
 	// the complete reconstructed filter. The callback must return promptly.
-	Stage0Commitment func(block chainhash.Hash) (basicHash, digest chainhash.Hash,
-		ok bool)
+	Stage0Commitment func(block chainhash.Hash) (
+		basicHash, digest chainhash.Hash, ok bool)
 }
 
 type stagedFilterSource struct {
@@ -69,20 +69,28 @@ func newStagedFilterSource(s *ChainService, c StagedFilterConfig) (
 	*stagedFilterSource, error) {
 
 	if !isDevNetwork(s.chainParams.Net) {
-		return nil, errors.New("staged compact filters require regtest or simnet")
+		return nil, errors.New(
+			"staged compact filters require regtest or simnet",
+		)
 	}
 	if c.Peer == "" {
-		return nil, errors.New("staged compact filters require a peer address")
+		return nil, errors.New(
+			"staged compact filters require a peer address",
+		)
 	}
 	if c.Timeout < 0 {
-		return nil, errors.New("staged compact filter timeout must be nonnegative")
+		return nil, errors.New(
+			"staged compact filter timeout must be nonnegative",
+		)
 	}
 	if c.Timeout == 0 {
 		c.Timeout = stagedFilterTimeout
 	}
 	addr, err := s.addrStringToNetAddr(c.Peer)
 	if err != nil {
-		return nil, fmt.Errorf("resolving staged compact filter peer: %w", err)
+		return nil, fmt.Errorf(
+			"resolving staged compact filter peer: %w", err,
+		)
 	}
 	return &stagedFilterSource{
 		service: s,
@@ -94,7 +102,8 @@ func newStagedFilterSource(s *ChainService, c StagedFilterConfig) (
 }
 
 func (s *stagedFilterSource) Match(ctx context.Context, hash chainhash.Hash,
-	scripts [][]byte, batch bool) (filtermatch.Decision[*gcs.Filter], error) {
+	scripts [][]byte, batch bool) (
+	filtermatch.Decision[*gcs.Filter], error) {
 
 	var unknown filtermatch.Decision[*gcs.Filter]
 	if err := ctx.Err(); err != nil {
@@ -121,18 +130,19 @@ func (s *stagedFilterSource) Match(ctx context.Context, hash chainhash.Hash,
 	}
 
 	stagedBatch := batch
-	if entry := s.prefixes[hash]; entry != nil && s.prefixStillTrusted(entry) {
+	entry := s.prefixes[hash]
+	if entry != nil && s.prefixStillTrusted(entry) {
 
 		if !entry.filter.Matches(hash, scripts) {
 			return filtermatch.Skip[*gcs.Filter](), nil
 		}
-		// A changed watch list can make a prefetched prefix a candidate.
+		// A watch list change can make a cached prefix a candidate.
 		// Other blocks in the same range have already been prefetched.
 		stagedBatch = false
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
-	entry, err := s.fetch(queryCtx, hash, scripts, stagedBatch)
+	entry, err = s.fetch(queryCtx, hash, scripts, stagedBatch)
 	cancel()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return unknown, ctxErr
@@ -150,7 +160,9 @@ func (s *stagedFilterSource) Match(ctx context.Context, hash chainhash.Hash,
 	return filtermatch.Candidate(entry.basic), nil
 }
 
-func (s *stagedFilterSource) Verify(filter *gcs.Filter, block *btcutil.Block) error {
+func (s *stagedFilterSource) Verify(filter *gcs.Filter,
+	block *btcutil.Block) error {
+
 	return s.basic.Verify(filter, block)
 }
 
@@ -169,14 +181,17 @@ func (s *stagedFilterSource) fetch(ctx context.Context, hash chainhash.Hash,
 		batchType = forwardBatch
 	}
 	q, err := s.service.prepareCFiltersQuery(
-		hash, wire.GCSFilterRegular, batchType, wire.MaxGetCFStagesHashes,
+		hash, wire.GCSFilterRegular, batchType,
+		wire.MaxGetCFStagesHashes,
 	)
 	if err != nil {
 		return nil, err
 	}
 	targetIndex, exists := q.headerIndex[hash]
 	if !exists {
-		return nil, errors.New("target block left the filter header chain")
+		return nil, errors.New(
+			"target block left the filter header chain",
+		)
 	}
 	entries := make([]*stagedFilterEntry, len(q.headerIndex))
 	for h, i := range q.headerIndex {
@@ -193,14 +208,18 @@ func (s *stagedFilterSource) fetch(ctx context.Context, hash chainhash.Hash,
 	// The anchor covers the complete contiguous range. Recheck it after
 	// the network exchange before retaining or matching any result.
 	if !s.service.stagedFilterOnChain(entries[len(entries)-1]) {
-		return nil, errors.New("staged compact filter chain changed during lookup")
+		return nil, errors.New(
+			"staged compact filter chain changed during lookup",
+		)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	if batch {
-		s.prefixes = make(map[chainhash.Hash]*stagedFilterEntry, len(entries))
+		s.prefixes = make(
+			map[chainhash.Hash]*stagedFilterEntry, len(entries),
+		)
 	}
 	for _, e := range entries {
 		if e.prefixSkipped {
@@ -212,7 +231,9 @@ func (s *stagedFilterSource) fetch(ctx context.Context, hash chainhash.Hash,
 		if _, err := s.service.putFilterToCache(
 			&e.hash, filterdb.RegularFilter, e.basic,
 		); err != nil {
-			log.Warnf("Couldn't cache staged compact filter: %v", err)
+			log.Warnf(
+				"Couldn't cache staged compact filter: %v", err,
+			)
 		}
 	}
 
@@ -239,7 +260,9 @@ func (s *stagedFilterSource) connectedPeer(ctx context.Context) (
 				return p, nil
 			}
 		}
-		return nil, errors.New("configured staged compact filter peer unavailable")
+		return nil, errors.New(
+			"configured staged compact filter peer unavailable",
+		)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-s.service.quit:
@@ -248,7 +271,8 @@ func (s *stagedFilterSource) connectedPeer(ctx context.Context) (
 }
 
 func (s *stagedFilterSource) fetchStages(ctx context.Context,
-	peer querysyncwm.Peer, entries []*stagedFilterEntry, scripts [][]byte) error {
+	peer querysyncwm.Peer, entries []*stagedFilterEntry,
+	scripts [][]byte) error {
 
 	messages, unsubscribe := peer.SubscribeRecvMsg()
 	defer unsubscribe()
@@ -258,7 +282,9 @@ func (s *stagedFilterSource) fetchStages(ctx context.Context,
 			return err
 		}
 		hashes := make([]chainhash.Hash, 0, len(entries))
-		pending := make(map[chainhash.Hash]*stagedFilterEntry, len(entries))
+		pending := make(
+			map[chainhash.Hash]*stagedFilterEntry, len(entries),
+		)
 		for _, e := range entries {
 			if !e.prefixSkipped {
 				hashes = append(hashes, e.hash)
@@ -288,7 +314,8 @@ func (s *stagedFilterSource) fetchStages(ctx context.Context,
 				if e == nil {
 					continue
 				}
-				if err := s.applyStage(e, m, scripts); err != nil {
+				err := s.applyStage(e, m, scripts)
+				if err != nil {
 					return err
 				}
 				delete(pending, m.BlockHash)
@@ -308,17 +335,23 @@ func (s *stagedFilterSource) applyStage(entry *stagedFilterEntry,
 	m *wire.MsgCFStage, scripts [][]byte) error {
 
 	if err := entry.filter.Add(m); err != nil {
-		return fmt.Errorf("decoding staged filter for %v: %w", entry.hash, err)
+		return fmt.Errorf(
+			"decoding staged filter for %v: %w", entry.hash, err,
+		)
 	}
 	switch m.Stage {
 	case 0:
 		if lookup := s.config.Stage0Commitment; lookup != nil {
 			basicHash, digest, ok := lookup(entry.hash)
 			if ok && matchesFilterHeader(basicHash, entry) &&
-				stagedfilters.PrefixCommitment(m, basicHash) == digest {
+				stagedfilters.PrefixCommitment(
+					m, basicHash,
+				) == digest {
 
 				entry.prefixDigest = digest
-				entry.prefixSkipped = !entry.filter.Matches(entry.hash, scripts)
+				entry.prefixSkipped = !entry.filter.Matches(
+					entry.hash, scripts,
+				)
 			}
 		}
 
@@ -328,10 +361,14 @@ func (s *stagedFilterSource) applyStage(entry *stagedFilterEntry,
 			return err
 		}
 		if !matchesFilterHeader(chainhash.DoubleHashH(enc), entry) {
-			return fmt.Errorf("staged filter for %v failed basic filter header check",
-				entry.hash)
+			return fmt.Errorf(
+				"staged filter for %v failed basic "+
+					"filter header check", entry.hash,
+			)
 		}
-		entry.basic, err = gcs.FromNBytes(builder.DefaultP, builder.DefaultM, enc)
+		entry.basic, err = gcs.FromNBytes(
+			builder.DefaultP, builder.DefaultM, enc,
+		)
 		if err != nil {
 			return err
 		}
@@ -341,11 +378,14 @@ func (s *stagedFilterSource) applyStage(entry *stagedFilterEntry,
 
 func (s *stagedFilterSource) prefixStillTrusted(e *stagedFilterEntry) bool {
 	basicHash, digest, ok := s.config.Stage0Commitment(e.hash)
-	return ok && digest == e.prefixDigest && matchesFilterHeader(basicHash, e) &&
+	return ok && digest == e.prefixDigest &&
+		matchesFilterHeader(basicHash, e) &&
 		s.service.stagedFilterOnChain(e)
 }
 
-func matchesFilterHeader(filterHash chainhash.Hash, entry *stagedFilterEntry) bool {
+func matchesFilterHeader(filterHash chainhash.Hash,
+	entry *stagedFilterEntry) bool {
+
 	var headers [2 * chainhash.HashSize]byte
 	copy(headers[:chainhash.HashSize], filterHash[:])
 	copy(headers[chainhash.HashSize:], entry.previous[:])

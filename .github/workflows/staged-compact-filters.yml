@@ -103,7 +103,21 @@ jobs:
         run: |
           make btcd
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Test the model bridge
-        run: go -C p-models/bridge test -mod=readonly ./...
       - name: Run the suite
         run: go test -mod=readonly -p 2 -timeout=25m ./...
+
+  model-bridge:
+    if: github.repository == 'Roasbeef/neutrino'
+    name: Rescan model bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: p-models/bridge/go.sum
+      - run: go -C p-models/bridge test -mod=readonly ./...

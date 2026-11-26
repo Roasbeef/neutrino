@@ -495,8 +495,11 @@ func (s *ChainService) prepareCFiltersQuery(blockHash chainhash.Hash,
 	}
 	bestHeight := int64(bestBlock.Height)
 	if int64(height) > bestHeight {
-		return nil, fmt.Errorf("filter header for block %v at height %d "+
-			"is beyond tip height %d", blockHash, height, bestHeight)
+		return nil, fmt.Errorf(
+			"filter header for block %v at height %d "+
+				"is beyond tip height %d",
+			blockHash, height, bestHeight,
+		)
 	}
 
 	// If the query specifies an optimistic batch we will attempt to fetch

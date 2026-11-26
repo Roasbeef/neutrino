@@ -33,13 +33,16 @@ func (f *Filter) Add(m *wire.MsgCFStage) error {
 	if m.Stage != f.next || m.Stage > wire.MaxCFStage {
 		return fmt.Errorf("unexpected filter stage %d", m.Stage)
 	}
-	if m.N > wire.MaxCFStageElements || len(m.Data) > wire.MaxCFStageDataSize {
+	if m.N > wire.MaxCFStageElements ||
+		len(m.Data) > wire.MaxCFStageDataSize {
+
 		return errors.New("filter stage exceeds profile limits")
 	}
 
 	var maximum uint64
 	if m.N != 0 {
-		maximum = (uint64(m.N)*builder.DefaultM - 1) >> remaining(m.Stage)
+		maxBasic := uint64(m.N)*builder.DefaultM - 1
+		maximum = maxBasic >> remaining(m.Stage)
 	}
 	var err error
 	if m.Stage == 0 {
@@ -76,7 +79,8 @@ func (f *Filter) Matches(hash chainhash.Hash, scripts [][]byte) bool {
 	)
 	shift := remaining(f.next - 1)
 	for _, target := range targets {
-		if _, found := slices.BinarySearch(f.values, target>>shift); found {
+		prefix := target >> shift
+		if _, found := slices.BinarySearch(f.values, prefix); found {
 			return true
 		}
 	}
@@ -91,7 +95,8 @@ func (f *Filter) Basic() ([]byte, error) {
 	}
 
 	var count bytes.Buffer
-	if err := wire.WriteVarInt(&count, 0, uint64(len(f.values))); err != nil {
+	n := uint64(len(f.values))
+	if err := wire.WriteVarInt(&count, 0, n); err != nil {
 		return nil, err
 	}
 	var last uint64
@@ -102,7 +107,9 @@ func (f *Filter) Basic() ([]byte, error) {
 	}
 	size := count.Len() + (bitLen+7)/8
 	if size > wire.MaxCFilterDataSize {
-		return nil, errors.New("reconstructed basic filter is too large")
+		return nil, errors.New(
+			"reconstructed basic filter is too large",
+		)
 	}
 	basic := make([]byte, size)
 	copy(basic, count.Bytes())
@@ -113,7 +120,7 @@ func (f *Filter) Basic() ([]byte, error) {
 	for _, value := range f.values {
 		delta := value - last
 		last = value
-		for quotient := delta >> builder.DefaultP; quotient > 0; quotient-- {
+		for range delta >> builder.DefaultP {
 			writeBits(payload, &cursor, 1, 1)
 		}
 		cursor++ // The terminating zero is already set.
@@ -124,7 +131,9 @@ func (f *Filter) Basic() ([]byte, error) {
 
 // PrefixCommitment binds the exact stage-zero payload and its element count
 // to the block and the independently authenticated BIP158 filter hash.
-func PrefixCommitment(m *wire.MsgCFStage, basicHash chainhash.Hash) chainhash.Hash {
+func PrefixCommitment(m *wire.MsgCFStage,
+	basicHash chainhash.Hash) chainhash.Hash {
+
 	const domain = "cfilter-stage0/v1\x00"
 	var input bytes.Buffer
 	input.Grow(len(domain) + 2*chainhash.HashSize +
@@ -142,6 +151,8 @@ func remaining(stage uint8) uint8 {
 }
 
 func decodePrefixes(n uint32, data []byte, maximum uint64) ([]uint64, error) {
+	const outsideRange = "filter prefix outside basic filter range"
+
 	// Each prefix uses at least eight bits. Check before allocating.
 	if len(data) < int(n) {
 		return nil, errors.New("truncated filter prefix")
@@ -161,7 +172,7 @@ func decodePrefixes(n uint32, data []byte, maximum uint64) ([]uint64, error) {
 			}
 			quotient++
 			if quotient > (maximum-last)>>prefixP {
-				return nil, errors.New("filter prefix outside basic filter range")
+				return nil, errors.New(outsideRange)
 			}
 		}
 		remainder, err := readBits(data, &cursor, prefixP)
@@ -170,7 +181,7 @@ func decodePrefixes(n uint32, data []byte, maximum uint64) ([]uint64, error) {
 		}
 		last += quotient<<prefixP | remainder
 		if last > maximum {
-			return nil, errors.New("filter prefix outside basic filter range")
+			return nil, errors.New(outsideRange)
 		}
 		values[i] = last
 	}
@@ -227,7 +238,8 @@ func writeBits(data []byte, cursor *int, value uint64, width int) {
 		space := 8 - *cursor%8
 		step := min(width, space)
 		mask := uint64((1 << step) - 1)
-		data[*cursor/8] |= byte((value>>(width-step))&mask) << (space - step)
+		chunk := byte((value>>(width-step))&mask)
+		data[*cursor/8] |= chunk << (space - step)
 		*cursor += step
 		width -= step
 	}

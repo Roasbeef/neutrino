@@ -918,7 +918,10 @@ func NewChainService(cfg Config) (*ChainService, error) {
 	s.blockMatcher = cfg.BlockMatcher
 	if cfg.StagedFilters != nil {
 		if s.blockMatcher != nil {
-			return nil, errors.New("staged compact filters cannot be combined with a custom block matcher")
+			return nil, errors.New(
+				"staged compact filters cannot be " +
+					"combined with a custom block matcher",
+			)
 		}
 		staged, err := newStagedFilterSource(&s, *cfg.StagedFilters)
 		if err != nil {

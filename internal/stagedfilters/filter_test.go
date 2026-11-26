@@ -21,11 +21,14 @@ func TestPrefixCommitmentVector(t *testing.T) {
 	t.Parallel()
 
 	stage := wire.MsgCFStage{
-		BlockHash: chainhash.Hash{0xff}, N: 253, Data: []byte{0x80, 0x00},
+		BlockHash: chainhash.Hash{0xff},
+		N:         253,
+		Data:      []byte{0x80, 0x00},
 	}
 	digest := PrefixCommitment(&stage, chainhash.Hash{0x01, 0x02})
-	require.Equal(t, "e5c4b22cc116dde13fe946962662e660f8366c13daff25db0c5ff75af4372ca7",
-		hex.EncodeToString(digest[:]))
+	const want = "e5c4b22cc116dde13fe946962662e660f" +
+		"8366c13daff25db0c5ff75af4372ca7"
+	require.Equal(t, want, hex.EncodeToString(digest[:]))
 }
 
 func TestStagedFilterMatchesBIP158(t *testing.T) {
@@ -40,16 +43,18 @@ func TestStagedFilterMatchesBIP158(t *testing.T) {
 			key := builder.DeriveKey(&hash)
 			scripts := make([][]byte, size)
 			values := make([]uint64, len(scripts))
+			modulus := uint64(size) * 784931
 			for i := range scripts {
 				scripts[i] = make([]byte, i%33+1)
 				_, err := rng.Read(scripts[i])
 				require.NoError(t, err)
-				values[i], _ = bits.Mul64(
-					siphash.Sum64(scripts[i], &key), uint64(size)*784931,
-				)
+				digest := siphash.Sum64(scripts[i], &key)
+				values[i], _ = bits.Mul64(digest, modulus)
 			}
 			slices.Sort(values)
-			basic, err := gcs.BuildGCSFilter(19, 784931, key, scripts)
+			basic, err := gcs.BuildGCSFilter(
+				19, 784931, key, scripts,
+			)
 			require.NoError(t, err)
 			want, err := basic.NBytes()
 			require.NoError(t, err)
@@ -57,10 +62,14 @@ func TestStagedFilterMatchesBIP158(t *testing.T) {
 			var staged Filter
 			for stage, data := range referenceStages(values) {
 				require.NoError(t, staged.Add(&wire.MsgCFStage{
-					BlockHash: hash, N: uint32(size), Stage: uint8(stage), Data: data,
+					BlockHash: hash,
+					N:         uint32(size),
+					Stage:     uint8(stage),
+					Data:      data,
 				}))
 				if size != 0 {
-					require.True(t, staged.Matches(hash, scripts[:1]))
+					got := staged.Matches(hash, scripts[:1])
+					require.True(t, got)
 				}
 			}
 			got, err := staged.Basic()
@@ -68,10 +77,12 @@ func TestStagedFilterMatchesBIP158(t *testing.T) {
 			require.Equal(t, want, got)
 
 			for i := range 50 {
-				watch := [][]byte{[]byte(fmt.Sprint("watch", i))}
+				script := []byte(fmt.Sprint("watch", i))
+				watch := [][]byte{script}
 				hit, err := basic.MatchAny(key, watch)
 				require.NoError(t, err)
-				require.Equal(t, hit, staged.Matches(hash, watch))
+				got := staged.Matches(hash, watch)
+				require.Equal(t, hit, got)
 			}
 		})
 	}
@@ -111,27 +122,61 @@ func TestStagedFilterRejectsMalformedData(t *testing.T) {
 		prefix  *wire.MsgCFStage
 		invalid wire.MsgCFStage
 	}{
-		{name: "stage out of order", invalid: wire.MsgCFStage{Stage: 1}},
-		{name: "oversized N", invalid: wire.MsgCFStage{N: wire.MaxCFStageElements + 1}},
-		{name: "prefix truncation", invalid: wire.MsgCFStage{N: 1}},
-		{name: "prefix trailing data", invalid: wire.MsgCFStage{Data: []byte{0}}},
-		{name: "prefix over range", invalid: wire.MsgCFStage{N: 1, Data: []byte{0xff}}},
-		{name: "prefix nonzero padding", invalid: wire.MsgCFStage{N: 1, Data: []byte{0x80, 0x01}}},
 		{
-			name: "changed count", prefix: &wire.MsgCFStage{N: 1, Data: []byte{0}},
-			invalid: wire.MsgCFStage{Stage: 1, N: 2, Data: []byte{0}},
+			name:    "stage out of order",
+			invalid: wire.MsgCFStage{Stage: 1},
 		},
 		{
-			name: "trailing refinement bytes", prefix: &wire.MsgCFStage{N: 1, Data: []byte{0}},
-			invalid: wire.MsgCFStage{Stage: 1, N: 1, Data: []byte{0, 0}},
+			name: "oversized N",
+			invalid: wire.MsgCFStage{
+				N: wire.MaxCFStageElements + 1,
+			},
 		},
 		{
-			name: "refinement padding", prefix: &wire.MsgCFStage{N: 1, Data: []byte{0}},
-			invalid: wire.MsgCFStage{Stage: 1, N: 1, Data: []byte{0x01}},
+			name:    "prefix truncation",
+			invalid: wire.MsgCFStage{N: 1},
 		},
 		{
-			name: "reordered equal prefixes", prefix: &wire.MsgCFStage{N: 2, Data: []byte{0, 0}},
-			invalid: wire.MsgCFStage{Stage: 1, N: 2, Data: []byte{0xf0}},
+			name:    "prefix trailing data",
+			invalid: wire.MsgCFStage{Data: []byte{0}},
+		},
+		{
+			name:    "prefix over range",
+			invalid: wire.MsgCFStage{N: 1, Data: []byte{0xff}},
+		},
+		{
+			name: "prefix nonzero padding",
+			invalid: wire.MsgCFStage{
+				N: 1, Data: []byte{0x80, 0x01},
+			},
+		},
+		{
+			name:   "changed count",
+			prefix: &wire.MsgCFStage{N: 1, Data: []byte{0}},
+			invalid: wire.MsgCFStage{
+				Stage: 1, N: 2, Data: []byte{0},
+			},
+		},
+		{
+			name:   "trailing refinement bytes",
+			prefix: &wire.MsgCFStage{N: 1, Data: []byte{0}},
+			invalid: wire.MsgCFStage{
+				Stage: 1, N: 1, Data: []byte{0, 0},
+			},
+		},
+		{
+			name:   "refinement padding",
+			prefix: &wire.MsgCFStage{N: 1, Data: []byte{0}},
+			invalid: wire.MsgCFStage{
+				Stage: 1, N: 1, Data: []byte{0x01},
+			},
+		},
+		{
+			name:   "reordered equal prefixes",
+			prefix: &wire.MsgCFStage{N: 2, Data: []byte{0, 0}},
+			invalid: wire.MsgCFStage{
+				Stage: 1, N: 2, Data: []byte{0xf0},
+			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

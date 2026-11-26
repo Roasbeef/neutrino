@@ -58,7 +58,8 @@ func TestStagedFiltersOnBitcoinPeer(t *testing.T) {
 			watchHit:   true,
 			altered:    true,
 			want: []string{
-				"getcfstages:0:3", "getcfstage:1:1", "getcfstage:2:1",
+				"getcfstages:0:3", "getcfstage:1:1",
+				"getcfstage:2:1",
 				"getcfstage:3:1", "getcfilters",
 			},
 		},
@@ -76,13 +77,17 @@ func TestStagedFiltersOnBitcoinPeer(t *testing.T) {
 			t.Cleanup(func() { _ = listener.Close() })
 
 			addr := listener.Addr().String()
-			cfg := &StagedFilterConfig{Peer: addr, Timeout: time.Second}
+			cfg := &StagedFilterConfig{
+				Peer:    addr,
+				Timeout: time.Second,
+			}
 			if test.vanilla {
 				cfg.Timeout = 100 * time.Millisecond
 			}
 			fixtures := make(map[chainhash.Hash]stagedFixture)
 			if test.commitment {
-				cfg.Stage0Commitment = func(hash chainhash.Hash) (
+				cfg.Stage0Commitment = func(
+					hash chainhash.Hash) (
 					chainhash.Hash, chainhash.Hash, bool) {
 
 					f, ok := fixtures[hash]
@@ -90,25 +95,34 @@ func TestStagedFiltersOnBitcoinPeer(t *testing.T) {
 				}
 			}
 			dataDir := t.TempDir()
-			db, err := walletdb.Create("bdb", filepath.Join(dataDir, "neutrino.db"),
-				true, dbOpenTimeout, false)
+			db, err := walletdb.Create(
+				"bdb", filepath.Join(dataDir, "neutrino.db"),
+				true, dbOpenTimeout, false,
+			)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 			svc, err := NewChainService(Config{
-				DataDir: dataDir, Database: db, ChainParams: params,
-				ConnectPeers: []string{addr}, StagedFilters: cfg,
+				DataDir:       dataDir,
+				Database:      db,
+				ChainParams:   params,
+				ConnectPeers:  []string{addr},
+				StagedFilters: cfg,
 			})
 			require.NoError(t, err)
 			watchScript := []byte{0x51}
-			blocks := seedStagedFixtures(t, svc, watchScript, fixtures)
+			blocks := seedStagedFixtures(
+				t, svc, watchScript, fixtures,
+			)
 			hashes := make([]chainhash.Hash, len(blocks))
 			for i, block := range blocks {
 				hashes[i] = *block.Hash()
 			}
 			requests := make(chan string, 10)
-			go serveStagedFixtures(listener, hashes, fixtures, requests,
-				test.vanilla, test.altered)
+			go serveStagedFixtures(
+				listener, hashes, fixtures, requests,
+				test.vanilla, test.altered,
+			)
 			require.NoError(t, svc.Start(t.Context()))
 			t.Cleanup(func() { require.NoError(t, svc.Stop()) })
 			waitForPeer(t, svc, addr)
@@ -118,11 +132,13 @@ func TestStagedFiltersOnBitcoinPeer(t *testing.T) {
 				watch = [][]byte{{0x52}}
 			}
 			matcher := (&RescanChainSource{svc}).BlockMatcher()
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(
+				t.Context(), 5*time.Second,
+			)
 			defer cancel()
 			fetches := 0
-			getBlock := func(_ context.Context, hash chainhash.Hash) (
-				*btcutil.Block, error) {
+			getBlock := func(_ context.Context,
+				hash chainhash.Hash) (*btcutil.Block, error) {
 
 				fetches++
 				require.Equal(t, hashes[0], hash)
@@ -140,7 +156,7 @@ func TestStagedFiltersOnBitcoinPeer(t *testing.T) {
 				require.Zero(t, fetches)
 			}
 
-			// The adjacent miss was prefetched on the same connection.
+			// The adjacent miss was prefetched on this connection.
 			got, err = filtermatch.FetchMatchingBlock(
 				ctx, matcher, hashes[1], watch, true, getBlock,
 			)
@@ -153,18 +169,20 @@ func TestStagedFiltersOnBitcoinPeer(t *testing.T) {
 			require.Equal(t, test.want, observed)
 
 			if !test.watchHit {
-				// A cached prefix is matched again for a watch list
-				// that changed after the historical query.
+				// Match the cached prefix to the changed watch
+				// list.
 				got, err = filtermatch.FetchMatchingBlock(
-					ctx, matcher, hashes[0], [][]byte{watchScript}, true,
-					getBlock,
+					ctx, matcher, hashes[0],
+					[][]byte{watchScript}, true, getBlock,
 				)
 				require.NoError(t, err)
 				require.Same(t, blocks[0], got)
 				require.Len(t, requests, 4)
 				for stage := range 4 {
-					require.Equal(t, fmt.Sprintf("getcfstage:%d:1", stage),
-						<-requests)
+					want := fmt.Sprintf(
+						"getcfstage:%d:1", stage,
+					)
+					require.Equal(t, want, <-requests)
 				}
 			}
 		})
@@ -207,31 +225,39 @@ func seedStagedFixtures(t *testing.T, svc *ChainService, script []byte,
 		require.NoError(t, err)
 		hash := header.BlockHash()
 		fixture := stagedFixture{
-			basic: basicBytes, basicHash: chainhash.DoubleHashH(basicBytes),
+			basic:     basicBytes,
+			basicHash: chainhash.DoubleHashH(basicBytes),
 		}
 		for i := range fixture.stages {
-			fixture.stages[i] = wire.MsgCFStage{Stage: uint8(i), BlockHash: hash}
+			fixture.stages[i] = wire.MsgCFStage{
+				Stage:     uint8(i),
+				BlockHash: hash,
+			}
 		}
 		if height == 1 {
 			// This fixture contains exactly one mapped value. Its
 			// prefix Rice quotient is either zero or one.
 			var value [1]uint64
 			filterhash.MapToRange(
-				value[:], builder.DeriveKey(&hash), builder.DefaultM,
-				[][]byte{script},
+				value[:], builder.DeriveKey(&hash),
+				builder.DefaultM, [][]byte{script},
 			)
 			prefix := byte(value[0] >> 12)
 			if prefix < 128 {
 				fixture.stages[0].Data = []byte{prefix}
 			} else {
 				r := prefix - 128
-				fixture.stages[0].Data = []byte{0x80 | r>>1, r << 7}
+				fixture.stages[0].Data = []byte{
+					0x80 | r>>1, r << 7,
+				}
 			}
 			for i := range fixture.stages {
 				fixture.stages[i].N = 1
 				if i != 0 {
-					digit := byte(value[0]>>((3-i)*4)) & 0x0f
-					fixture.stages[i].Data = []byte{digit << 4}
+					digit := byte(value[0] >> ((3 - i) * 4))
+					fixture.stages[i].Data = []byte{
+						(digit & 0x0f) << 4,
+					}
 				}
 			}
 		}
@@ -240,10 +266,14 @@ func seedStagedFixtures(t *testing.T, svc *ChainService, script []byte,
 		)
 		fixtures[hash] = fixture
 
-		filterHeader, err := builder.MakeHeaderForFilter(basicFilter, *prevFilter)
+		filterHeader, err := builder.MakeHeaderForFilter(
+			basicFilter, *prevFilter,
+		)
 		require.NoError(t, err)
 		filterHeaders = append(filterHeaders, headerfs.FilterHeader{
-			HeaderHash: hash, FilterHash: filterHeader, Height: height,
+			HeaderHash: hash,
+			FilterHash: filterHeader,
+			Height:     height,
 		})
 		blockHeaders = append(blockHeaders, headerfs.BlockHeader{
 			BlockHeader: &header, Height: height,
@@ -281,8 +311,12 @@ func serveStagedFixtures(listener net.Listener, hashes []chainhash.Hash,
 	if write(version) != nil || write(wire.NewMsgVerAck()) != nil {
 		return
 	}
-	respond := func(req wire.Message, stage uint8, requested []chainhash.Hash) error {
-		requests <- fmt.Sprintf("%s:%d:%d", req.Command(), stage, len(requested))
+	respond := func(req wire.Message, stage uint8,
+		requested []chainhash.Hash) error {
+
+		requests <- fmt.Sprintf(
+			"%s:%d:%d", req.Command(), stage, len(requested),
+		)
 		if vanilla {
 			return nil
 		}
@@ -308,7 +342,10 @@ func serveStagedFixtures(listener net.Listener, hashes []chainhash.Hash,
 		case *wire.MsgPing:
 			err = write(wire.NewMsgPong(m.Nonce))
 		case *wire.MsgGetCFCheckpt:
-			err = write(wire.NewMsgCFCheckpt(m.FilterType, &m.StopHash, 0))
+			checkpoint := wire.NewMsgCFCheckpt(
+				m.FilterType, &m.StopHash, 0,
+			)
+			err = write(checkpoint)
 		case *wire.MsgGetCFStage:
 			err = respond(m, m.Stage, []chainhash.Hash{m.BlockHash})
 		case *wire.MsgGetCFStages:
@@ -316,7 +353,11 @@ func serveStagedFixtures(listener net.Listener, hashes []chainhash.Hash,
 		case *wire.MsgGetCFilters:
 			requests <- m.Command()
 			for _, hash := range hashes[m.StartHeight-1:] {
-				err = write(wire.NewMsgCFilter(m.FilterType, &hash, fixtures[hash].basic))
+				filter := wire.NewMsgCFilter(
+					m.FilterType, &hash,
+					fixtures[hash].basic,
+				)
+				err = write(filter)
 				if err != nil || hash == m.StopHash {
 					break
 				}

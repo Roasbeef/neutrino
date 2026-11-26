@@ -44,8 +44,8 @@ func checkRange(t *testing.T, scripts [][]byte, key [16]byte, modulus uint64) {
 	mapScalar(want, &key, modulus, scripts)
 	MapToRange(got, key, modulus, scripts)
 	if !slices.Equal(got[:len(scripts)], want) || got[len(scripts)] != 456 {
-		t.Fatalf("maps differ for %d scripts with modulus %d\ngot  %x\nwant %x",
-			len(scripts), modulus, got, want)
+		t.Fatalf("maps differ for %d scripts with modulus %d\n"+
+			"got  %x\nwant %x", len(scripts), modulus, got, want)
 	}
 }
 
@@ -83,13 +83,14 @@ func BenchmarkMapToRange(b *testing.B) {
 		for _, count := range []int{1, 8, 16, 32, 128, 512} {
 			scripts := makeScripts(rng, count, shape.lengths)
 			dst := make([]uint64, len(scripts))
-			b.Run(fmt.Sprintf("%s/%d/scalar", shape.name, count), func(b *testing.B) {
+			name := fmt.Sprintf("%s/%d", shape.name, count)
+			b.Run(name+"/scalar", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					mapScalar(dst, &key, modulus, scripts)
 				}
 			})
-			b.Run(fmt.Sprintf("%s/%d/selected", shape.name, count), func(b *testing.B) {
+			b.Run(name+"/selected", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					MapToRange(dst, key, modulus, scripts)
