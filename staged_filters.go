@@ -132,7 +132,6 @@ func (s *stagedFilterSource) Match(ctx context.Context, hash chainhash.Hash,
 	stagedBatch := batch
 	entry := s.prefixes[hash]
 	if entry != nil && s.prefixStillTrusted(entry) {
-
 		if !entry.filter.Matches(hash, scripts) {
 			return filtermatch.Skip[*gcs.Filter](), nil
 		}
