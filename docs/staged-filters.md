@@ -58,3 +58,8 @@ The mapping reused its output buffer. This microbenchmark covers SipHash-2-4
 and range reduction. A rescan also decodes filters, reads headers, exchanges
 messages and retrieves candidate blocks. The scalar path handles short
 batches, interleaved script lengths and machines without the vector build.
+
+Go 1.27 adds portable experimental SIMD and revises the amd64 intrinsics.
+This implementation uses version-specific amd64 adapters and retains scalar
+mapping on arm64. CI exercises both architectures on Go 1.27. The x86 timing
+above does not estimate phone performance. [Go 1.27 release notes](https://go.dev/doc/go1.27#simd)
